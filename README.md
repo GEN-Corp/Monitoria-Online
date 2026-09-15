@@ -3,7 +3,7 @@
 > Plataforma para gerenciamento e organização de monitorias acadêmicas.
 
 **Instituto Federal de Educação, Ciência e Tecnologia de São Paulo — IFSP**
-**Curso:** Engenharia de Software
+**Curso:** Técnico em Informática
 **Disciplina:** Aula 01 — Sprint 0
 **Etapa:** Descoberta e Planejamento do Levantamento de Requisitos
 
