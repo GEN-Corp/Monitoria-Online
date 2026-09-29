@@ -4,8 +4,7 @@
 
 **Instituto Federal de Educação, Ciência e Tecnologia de São Paulo — IFSP**
 **Curso:** Técnico em Informática
-**Disciplina:** Aula 01 — Sprint 0
-**Etapa:** Descoberta e Planejamento do Levantamento de Requisitos
+**Disciplina:** Projeto de Software
 
 ---
 
