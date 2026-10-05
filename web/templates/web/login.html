@@ -1,0 +1,40 @@
+{% extends "web/base.html" %}
+
+{% block content %}
+
+<div class="card">
+
+    <h1>Monitoria Online</h1>
+
+    <p>Entre na sua conta</p>
+
+    {% if form.errors %}
+        <p>Usuário ou senha inválidos.</p>
+    {% endif %}
+
+    <form method="post">
+
+        {% csrf_token %}
+
+        <label>Usuário</label>
+        {{ form.username }}
+
+        <label>Senha</label>
+        {{ form.password }}
+
+        <button type="submit">
+            Entrar
+        </button>
+
+    </form>
+
+    <p>
+    Não possui uma conta?
+    <a href="{% url 'register' %}">
+        Criar conta
+    </a>
+    </p>
+
+</div>
+
+{% endblock %}

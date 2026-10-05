@@ -1,0 +1,58 @@
+{% extends "web/base.html" %}
+
+{% block content %}
+
+<div class="card">
+
+    <h1>Nova dúvida</h1>
+
+    <form method="post">
+
+        {% csrf_token %}
+
+        <label>Disciplina</label>
+
+        <select name="course" required>
+            <option value="">
+                Selecione uma disciplina
+            </option>
+
+            {% for course in courses %}
+                <option value="{{ course.id }}">
+                    {{ course.code }} - {{ course.name }}
+                </option>
+            {% endfor %}
+
+        </select>
+
+        <label>Assunto</label>
+
+        <input
+            type="text"
+            name="subject"
+            placeholder="Ex.: Dúvida sobre atividade"
+            required
+        >
+
+        <label>Descrição</label>
+
+        <textarea
+            name="description"
+            rows="8"
+            placeholder="Descreva sua dúvida..."
+            required
+        ></textarea>
+
+        <button type="submit">
+            Enviar dúvida
+        </button>
+
+    </form>
+
+    <a href="{% url 'ticket_list' %}">
+        Voltar para minhas dúvidas
+    </a>
+
+</div>
+
+{% endblock %}

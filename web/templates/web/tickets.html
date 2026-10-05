@@ -1,0 +1,73 @@
+{% extends "web/base.html" %}
+
+{% block content %}
+
+<div class="card">
+
+    <h1>Minhas dúvidas</h1>
+
+    <p>
+        Aqui você pode acompanhar suas solicitações de atendimento.
+    </p>
+
+    <a href="{% url 'ticket_create' %}">
+        <button type="button">
+            + Nova dúvida
+        </button>
+    </a>
+
+</div>
+
+{% if tickets %}
+
+    {% for ticket in tickets %}
+
+        <div class="card">
+
+            <h2>
+                #{{ ticket.id }} - {{ ticket.subject }}
+            </h2>
+
+            <p>
+                <strong>Disciplina:</strong>
+                {{ ticket.course.name }}
+            </p>
+
+            <p>
+                <strong>Status:</strong>
+                {{ ticket.get_status_display }}
+            </p>
+
+            <p>
+                <strong>Prioridade:</strong>
+                {{ ticket.get_priority_display }}
+            </p>
+
+            <p>
+                <strong>Criado em:</strong>
+                {{ ticket.created_at|date:"d/m/Y H:i" }}
+            </p>
+
+            <hr>
+
+            <p>
+                {{ ticket.description }}
+            </p>
+
+        </div>
+
+    {% endfor %}
+
+{% else %}
+
+    <div class="card">
+
+        <p>
+            Você ainda não possui nenhuma dúvida.
+        </p>
+
+    </div>
+
+{% endif %}
+
+{% endblock %}

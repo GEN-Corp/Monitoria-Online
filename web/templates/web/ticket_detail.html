@@ -1,0 +1,106 @@
+{% extends "web/base.html" %}
+
+{% block content %}
+
+<div class="card">
+
+    <h1>
+        #{{ ticket.id }} - {{ ticket.subject }}
+    </h1>
+
+    <p>
+        <strong>Aluno:</strong>
+        {{ ticket.student.username }}
+    </p>
+
+    <p>
+        <strong>Disciplina:</strong>
+        {{ ticket.course.name }}
+    </p>
+
+    <p>
+        <strong>Status:</strong>
+        {{ ticket.get_status_display }}
+    </p>
+
+    <hr>
+
+    <h3>Dúvida</h3>
+
+    <p>
+        {{ ticket.description }}
+    </p>
+
+</div>
+
+
+<div class="card">
+
+    <h2>Conversa</h2>
+
+    {% if ticket.messages.all %}
+
+        {% for message in ticket.messages.all %}
+
+            <div style="
+                padding: 12px;
+                margin-bottom: 10px;
+                background: #f4f6f8;
+                border-radius: 8px;
+            ">
+
+                <strong>
+                    {{ message.author.username }}
+                </strong>
+
+                <small>
+                    {{ message.created_at|date:"d/m/Y H:i" }}
+                </small>
+
+                <p>
+                    {{ message.message }}
+                </p>
+
+            </div>
+
+        {% empty %}
+
+            <p>
+                Nenhuma mensagem ainda.
+            </p>
+
+        {% endfor %}
+
+    {% endif %}
+
+</div>
+
+
+<div class="card">
+
+    <h2>Responder</h2>
+
+    <form method="post">
+
+        {% csrf_token %}
+
+        <textarea
+            name="message"
+            rows="6"
+            placeholder="Digite sua resposta..."
+            required
+        ></textarea>
+
+        <button type="submit">
+            Enviar resposta
+        </button>
+
+    </form>
+
+</div>
+
+<a href="{% url 'monitor_tickets' %}">
+    Voltar para atendimentos
+</a>
+
+{% endblock %}
