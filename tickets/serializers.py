@@ -62,3 +62,30 @@ class TicketSerializer(serializers.ModelSerializer):
             "updated_at",
             "messages",
         ]
+
+    def validate(self, attrs):
+        course = attrs.get("course", getattr(self.instance, "course", None))
+        monitoring = attrs.get(
+            "monitoring",
+            getattr(self.instance, "monitoring", None),
+        )
+
+        if course is None or not course.active:
+            raise serializers.ValidationError(
+                {"course": "Selecione uma disciplina ativa."}
+            )
+
+        if not course.monitorings.filter(status="ACTIVE").exists():
+            raise serializers.ValidationError(
+                {"course": "A disciplina não possui monitoria ativa."}
+            )
+
+        if monitoring and (
+            monitoring.course_id != course.pk
+            or monitoring.status != "ACTIVE"
+        ):
+            raise serializers.ValidationError(
+                {"monitoring": "A monitoria precisa ser ativa e pertencer à disciplina."}
+            )
+
+        return attrs

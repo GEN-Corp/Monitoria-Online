@@ -1,11 +1,16 @@
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
+from django.core.exceptions import PermissionDenied
+from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 
 from users.models import User
 from courses.models import Course
+from monitoring.models import Monitoring
 from tickets.models import Ticket, TicketMessage
 from tickets.querysets import tickets_for_user
+from .forms import CourseForm, MonitoringAssignmentForm
 
 
 @login_required
@@ -21,8 +26,6 @@ def register(request):
         email = request.POST.get("email")
         password = request.POST.get("password")
         password_confirm = request.POST.get("password_confirm")
-        tipo = request.POST.get("tipo")
-
         if password != password_confirm:
             return render(
                 request,
@@ -43,7 +46,7 @@ def register(request):
             last_name=last_name,
             email=email,
             password=password,
-            tipo=tipo,
+            tipo=User.TipoUsuario.ALUNO,
         )
 
         login(request, user)
@@ -158,4 +161,89 @@ def ticket_detail(request, ticket_id):
         request,
         "web/ticket_detail.html",
         {"ticket": ticket, "can_reply": can_reply, "error": error},
+    )
+
+
+def professor_managed_courses(user):
+    return Course.objects.filter(
+        Q(created_by=user) | Q(monitorings__professor=user)
+    ).distinct()
+
+
+@login_required
+def professor_courses(request):
+    if request.user.tipo != User.TipoUsuario.PROFESSOR:
+        raise PermissionDenied
+
+    courses = professor_managed_courses(request.user).prefetch_related(
+        "monitorings__monitor"
+    )
+    return render(
+        request,
+        "web/professor_courses.html",
+        {"courses": courses},
+    )
+
+
+@login_required
+def professor_course_create(request):
+    if request.user.tipo != User.TipoUsuario.PROFESSOR:
+        raise PermissionDenied
+
+    form = CourseForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        course = form.save(commit=False)
+        course.created_by = request.user
+        course.save()
+        return redirect("professor_course_assignments", course_id=course.pk)
+
+    return render(request, "web/course_form.html", {"form": form})
+
+
+@login_required
+def professor_course_assignments(request, course_id):
+    if request.user.tipo != User.TipoUsuario.PROFESSOR:
+        raise PermissionDenied
+
+    course = get_object_or_404(
+        professor_managed_courses(request.user),
+        pk=course_id,
+    )
+    form = MonitoringAssignmentForm(
+        request.POST or None,
+        course=course,
+    )
+
+    if request.method == "POST" and form.is_valid():
+        monitor = form.cleaned_data["monitor"]
+        assignment, created = Monitoring.objects.get_or_create(
+            course=course,
+            monitor=monitor,
+            professor=request.user,
+            defaults={
+                "status": Monitoring.Status.ACTIVE,
+                "start_date": timezone.localdate(),
+            },
+        )
+        if not created and assignment.status != Monitoring.Status.ACTIVE:
+            assignment.status = Monitoring.Status.ACTIVE
+            assignment.start_date = timezone.localdate()
+            assignment.end_date = None
+            assignment.save(
+                update_fields=["status", "start_date", "end_date"]
+            )
+        return redirect("professor_course_assignments", course_id=course.pk)
+
+    assignments = Monitoring.objects.filter(
+        course=course,
+        professor=request.user,
+    ).select_related("monitor")
+    return render(
+        request,
+        "web/course_assignments.html",
+        {
+            "course": course,
+            "form": form,
+            "assignments": assignments,
+        },
     )
