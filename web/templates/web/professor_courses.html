@@ -1,0 +1,33 @@
+{% extends "web/base.html" %}
+
+{% block content %}
+<div class="card">
+    <h1>Minhas disciplinas</h1>
+    <p>Cadastre disciplinas e associe monitores. Alunos poderão enviar dúvidas para disciplinas ativas com monitoria.</p>
+    <a href="{% url 'professor_course_create' %}">
+        <button type="button">Criar disciplina</button>
+    </a>
+</div>
+
+{% for course in courses %}
+    <div class="card">
+        <h2>{{ course.code }} - {{ course.name }}</h2>
+        <p>{{ course.description }}</p>
+        <p><strong>Estado:</strong> {% if course.active %}Ativa{% else %}Inativa{% endif %}</p>
+        <p><strong>Monitores:</strong>
+            {% for monitoring in course.monitorings.all %}
+                {{ monitoring.monitor.username }}
+                ({{ monitoring.get_status_display }})
+                {% if not forloop.last %}, {% endif %}
+            {% empty %}
+                Nenhum monitor associado.
+            {% endfor %}
+        </p>
+        <a href="{% url 'professor_course_assignments' course.id %}">
+            <button type="button">Gerenciar monitores</button>
+        </a>
+    </div>
+{% empty %}
+    <div class="card"><p>Você ainda não criou ou gerencia disciplinas.</p></div>
+{% endfor %}
+{% endblock %}

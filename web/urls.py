@@ -8,6 +8,9 @@ from .views import (
     ticket_list,
     monitor_tickets,
     ticket_detail,
+    professor_courses,
+    professor_course_create,
+    professor_course_assignments,
 )
 
 
@@ -56,5 +59,20 @@ urlpatterns = [
     "tickets/<int:ticket_id>/",
     ticket_detail,
     name="ticket_detail",
+    ),
+    path(
+        "professor/disciplinas/",
+        professor_courses,
+        name="professor_courses",
+    ),
+    path(
+        "professor/disciplinas/nova/",
+        professor_course_create,
+        name="professor_course_create",
+    ),
+    path(
+        "professor/disciplinas/<int:course_id>/monitores/",
+        professor_course_assignments,
+        name="professor_course_assignments",
     ),
 ]

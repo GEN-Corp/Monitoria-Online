@@ -1,4 +1,4 @@
-from rest_framework import viewsets
+from rest_framework import mixins, viewsets
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 
@@ -7,7 +7,12 @@ from .querysets import tickets_for_user
 from .serializers import TicketSerializer, TicketMessageSerializer
 
 
-class TicketViewSet(viewsets.ModelViewSet):
+class TicketViewSet(
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.CreateModelMixin,
+    viewsets.GenericViewSet,
+):
     serializer_class = TicketSerializer
     permission_classes = [IsAuthenticated]
 
@@ -25,7 +30,12 @@ class TicketViewSet(viewsets.ModelViewSet):
         serializer.save(student=user)
 
 
-class TicketMessageViewSet(viewsets.ModelViewSet):
+class TicketMessageViewSet(
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.CreateModelMixin,
+    viewsets.GenericViewSet,
+):
     serializer_class = TicketMessageSerializer
     permission_classes = [IsAuthenticated]
 

@@ -1,0 +1,13 @@
+{% extends "web/base.html" %}
+
+{% block content %}
+<div class="card">
+    <h1>Criar disciplina</h1>
+    <form method="post">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <button type="submit">Salvar disciplina</button>
+    </form>
+    <a href="{% url 'professor_courses' %}">Voltar para disciplinas</a>
+</div>
+{% endblock %}

@@ -1,0 +1,25 @@
+{% extends "web/base.html" %}
+
+{% block content %}
+<div class="card">
+    <h1>Monitores de {{ course.code }} - {{ course.name }}</h1>
+    <form method="post">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <button type="submit">Associar monitor</button>
+    </form>
+</div>
+
+<div class="card">
+    <h2>Monitores associados por você</h2>
+    {% for assignment in assignments %}
+        <p>
+            {{ assignment.monitor.username }} —
+            {{ assignment.get_status_display }}
+        </p>
+    {% empty %}
+        <p>Nenhum monitor associado ainda.</p>
+    {% endfor %}
+</div>
+<a href="{% url 'professor_courses' %}">Voltar para disciplinas</a>
+{% endblock %}

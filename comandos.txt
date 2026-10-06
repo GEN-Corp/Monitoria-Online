@@ -1,17 +1,52 @@
-git clone URL_DO_REPOSITORIO
+AMBIENTE LOCAL
 
-cd monitoria-online
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python manage.py migrate
+python manage.py seed_demo
+python manage.py runserver
 
-python -m venv venv
+O comando seed_demo solicita uma senha no terminal e a define para todas as
+contas de demonstração. A senha não aparece na tela e não fica salva no Git.
+O comando pode ser executado novamente para redefinir a senha das contas demo.
 
-.\venv\Scripts\Activate.ps1
+CONTAS CRIADAS POR seed_demo
 
-python -m pip install --upgrade pip
+Usuário                    Perfil
+demo_professor             Professor
+demo_student               Aluno
+demo_monitor_informatica   Monitor de Informática
+demo_monitor_fisica        Monitor de Física
+demo_monitor_quimica       Monitor de Química
+demo_monitor_matematica    Monitor de Matemática
+demo_monitor_biologia      Monitor de Biologia
 
-pip install -r requirements.txt
+As disciplinas de demonstração são Informática, Física, Química, Matemática e
+Biologia. Cada uma tem um monitor e uma monitoria ativa associados ao professor
+demo_professor.
 
+ACESSO PELA INTERNET
+
+O projeto inclui Procfile, suporte a Gunicorn, PostgreSQL e arquivos estáticos.
+Para publicar, escolha um provedor de hospedagem e crie um banco PostgreSQL.
+Configure no provedor as variáveis DJANGO_DEBUG=false, DJANGO_SECRET_KEY,
+DJANGO_ALLOWED_HOSTS, DJANGO_CSRF_TRUSTED_ORIGINS e DATABASE_URL.
+O provedor deve oferecer HTTPS e PostgreSQL gerenciado.
+
+Para gerar uma chave secreta localmente (cadastre o resultado diretamente nas
+variáveis protegidas do provedor, sem salvar o resultado no Git):
+python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+
+Comando de build:
+python -m pip install -r requirements.txt
+python manage.py collectstatic --noinput
 python manage.py migrate
 
+Comando de inicialização:
+gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 60
+
+Não publique senhas, chaves ou URLs de banco com credenciais neste arquivo.
 python manage.py runserver
 
 

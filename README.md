@@ -2,6 +2,38 @@
 
 > Plataforma para gerenciamento e organização de monitorias acadêmicas.
 
+## Ambiente local, contas de demonstração e publicação
+
+Ative o ambiente virtual, aplique as migrações e crie os dados de teste:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python manage.py migrate
+python manage.py seed_demo
+python manage.py runserver
+```
+
+`seed_demo` cria um professor, um aluno, cinco monitores e monitorias ativas
+para Informática, Física, Química, Matemática e Biologia. O comando pede uma
+senha local no terminal para todas as contas de demonstração; ela não é exibida
+nem armazenada nos arquivos versionados. Os nomes de usuário estão em
+[comandos.txt](./comandos.txt).
+
+O cadastro público cria apenas alunos. Professores podem criar disciplinas em
+**Gerenciar disciplinas e monitores** e associar monitores ativos. Monitores
+veem e respondem somente dúvidas de disciplinas às quais estão associados.
+
+Para publicar em uma plataforma de hospedagem, use o `Procfile` e configure
+Gunicorn, PostgreSQL (`DATABASE_URL`) e as variáveis `DJANGO_DEBUG=false`,
+`DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS` e `DJANGO_CSRF_TRUSTED_ORIGINS`.
+Use um provedor com HTTPS e mantenha os segredos nas variáveis protegidas da
+hospedagem, não no repositório.
+Execute `python manage.py collectstatic --noinput` e `python manage.py migrate`
+no processo de implantação. Consulte [.env.example](./.env.example) para os
+nomes das variáveis, sem preencher esse arquivo com segredos.
+
 **Instituto Federal de Educação, Ciência e Tecnologia de São Paulo — IFSP**
 **Curso:** Técnico em Informática
 **Disciplina:** Projeto de Software
@@ -505,4 +537,3 @@ A plataforma será organizada de acordo com os principais componentes do process
 <p align="center">
   Desenvolvido como projeto acadêmico para o curso de <strong>Engenharia de Software — IFSP</strong>.
 </p>
-
