@@ -1,0 +1,29 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "monitorings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "course_id", "order": "ASCENDING"},
+        {"fieldPath": "status", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "monitorings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "monitor_uid", "order": "ASCENDING"},
+        {"fieldPath": "status", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "monitorings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "professor_uid", "order": "ASCENDING"},
+        {"fieldPath": "status", "order": "ASCENDING"}
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

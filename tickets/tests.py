@@ -1,372 +1,420 @@
-from datetime import date
-from io import StringIO
-from secrets import token_urlsafe
+from datetime import datetime, timezone
+from unittest import TestCase
 from unittest.mock import patch
 
-from django.core.management import call_command
-from django.test import TestCase, override_settings
+from django.contrib.auth.models import AnonymousUser
+from django.core.exceptions import PermissionDenied, ValidationError
+from django.http import HttpResponseRedirect
+from django.test import RequestFactory, SimpleTestCase
 from django.urls import reverse
-from rest_framework.test import APIClient
+from rest_framework.test import APIRequestFactory, force_authenticate
+from tickets.views import TicketViewSet
 
-from courses.models import Course
-from monitoring.models import Monitoring
-from users.models import User
-from tickets.querysets import tickets_for_user
+from firebase_backend.records import FirebaseUser, MessageRecord
+from firebase_backend.repository import (
+    add_message,
+    assign_monitor,
+    create_course,
+    create_ticket,
+    get_ticket_for_user,
+    list_active_courses_for_students,
+    list_tickets,
+)
+from firebase_backend.middleware import FirebaseSessionMiddleware
 
-from .models import Ticket, TicketMessage
+
+class FakeSnapshot:
+    def __init__(self, document_id, data):
+        self.id = document_id
+        self._data = data
+        self.exists = data is not None
+
+    def to_dict(self):
+        return self._data
 
 
-class TicketConversationTests(TestCase):
+class FakeDocument:
+    def __init__(self, collection, document_id):
+        self.collection_ref = collection
+        self.id = document_id
+
+    @property
+    def data(self):
+        return self.collection_ref.documents.get(self.id)
+
+    def get(self):
+        return FakeSnapshot(self.id, self.data)
+
+    def create(self, data):
+        if self.data is not None:
+            raise ValueError("Document already exists.")
+        self.collection_ref.documents[self.id] = data
+
+    def set(self, data):
+        self.collection_ref.documents[self.id] = data
+
+    def update(self, data):
+        self.collection_ref.documents[self.id].update(data)
+
+    def collection(self, name):
+        key = (self.collection_ref.name, self.id, name)
+        return self.collection_ref.database.subcollections.setdefault(
+            key,
+            FakeCollection(self.collection_ref.database, name),
+        )
+
+
+class FakeCollection:
+    def __init__(self, database, name, filters=(), max_results=None, ordering=None):
+        self.database = database
+        self.name = name
+        self.documents = database.collections.setdefault(name, {})
+        self.filters = filters
+        self.max_results = max_results
+        self.ordering = ordering
+
+    def document(self, document_id=None):
+        return FakeDocument(self, document_id or "generated-message")
+
+    def where(self, field, operator, value):
+        return FakeCollection(
+            self.database,
+            self.name,
+            (*self.filters, (field, operator, value)),
+            self.max_results,
+            self.ordering,
+        )
+
+    def limit(self, max_results):
+        return FakeCollection(
+            self.database,
+            self.name,
+            self.filters,
+            max_results,
+            self.ordering,
+        )
+
+    def order_by(self, field):
+        return FakeCollection(
+            self.database,
+            self.name,
+            self.filters,
+            self.max_results,
+            field,
+        )
+
+    def stream(self):
+        documents = []
+        for document_id, data in self.documents.items():
+            if all(
+                (data.get(field) == value if operator == "==" else False)
+                for field, operator, value in self.filters
+            ):
+                documents.append(FakeSnapshot(document_id, data))
+        if self.ordering:
+            documents.sort(
+                key=lambda snapshot: snapshot.to_dict().get(self.ordering)
+            )
+        if self.max_results is not None:
+            documents = documents[: self.max_results]
+        return iter(documents)
+
+
+class FakeBatch:
+    def __init__(self):
+        self.operations = []
+
+    def create(self, reference, data):
+        self.operations.append(("create", reference, data))
+
+    def update(self, reference, data):
+        self.operations.append(("update", reference, data))
+
+    def commit(self):
+        for operation, reference, data in self.operations:
+            getattr(reference, operation)(data)
+
+
+class FakeFirestore:
+    def __init__(self):
+        self.collections = {}
+        self.subcollections = {}
+
+    def collection(self, name):
+        return FakeCollection(self, name)
+
+    def batch(self):
+        return FakeBatch()
+
+
+def user(uid, role, username=None):
+    return FirebaseUser(
+        uid=uid,
+        username=username or uid,
+        email=f"{uid}@example.test",
+        first_name=uid,
+        last_name="",
+        tipo=role,
+    )
+
+
+def seed_user(database, account):
+    database.collection("users").document(account.uid).set(
+        {
+            "username": account.username,
+            "email": account.email,
+            "first_name": account.first_name,
+            "last_name": account.last_name,
+            "tipo": account.tipo,
+        }
+    )
+
+
+class FirestoreTicketRepositoryTests(TestCase):
     def setUp(self):
-        self.student = User.objects.create_user(
-            username="aluno",
-            password="password",
-            tipo=User.TipoUsuario.ALUNO,
+        self.database = FakeFirestore()
+        self.student = user("student-uid", "ALUNO", "student")
+        self.math_monitor = user("math-monitor-uid", "MONITOR", "math-monitor")
+        self.physics_monitor = user("physics-monitor-uid", "MONITOR", "physics-monitor")
+        self.professor = user("professor-uid", "PROFESSOR", "professor")
+        self.course_math = {
+            "code": "MAT",
+            "name": "Matemática",
+            "description": "",
+            "active": True,
+            "created_by": self.professor.uid,
+        }
+        self.course_physics = {
+            "code": "FIS",
+            "name": "Física",
+            "description": "",
+            "active": True,
+            "created_by": self.professor.uid,
+        }
+        for account in (
+            self.student,
+            self.math_monitor,
+            self.physics_monitor,
+            self.professor,
+        ):
+            seed_user(self.database, account)
+        self.database.collection("courses").document("MAT").set(self.course_math)
+        self.database.collection("courses").document("FIS").set(self.course_physics)
+        self.database.collection("monitorings").document("math-assignment").set(
+            {
+                "course_id": "MAT",
+                "monitor_uid": self.math_monitor.uid,
+                "professor_uid": self.professor.uid,
+                "status": "ACTIVE",
+            }
         )
-        self.monitor = User.objects.create_user(
-            username="monitor",
-            password="password",
-            tipo=User.TipoUsuario.MONITOR,
+        self.database.collection("monitorings").document("physics-assignment").set(
+            {
+                "course_id": "FIS",
+                "monitor_uid": self.physics_monitor.uid,
+                "professor_uid": self.professor.uid,
+                "status": "ACTIVE",
+            }
         )
-        self.professor = User.objects.create_user(
-            username="professor",
-            password="password",
-            tipo=User.TipoUsuario.PROFESSOR,
+        now = datetime.now(timezone.utc)
+        self.database.collection("tickets").document("math-ticket").set(
+            {
+                "student_uid": self.student.uid,
+                "course_id": "MAT",
+                "subject": "Frações",
+                "description": "Dúvida em matemática.",
+                "status": "OPEN",
+                "priority": "MEDIUM",
+                "created_at": now,
+                "updated_at": now,
+            }
         )
-        self.other_monitor = User.objects.create_user(
-            username="outro-monitor",
-            password="password",
-            tipo=User.TipoUsuario.MONITOR,
-        )
-        self.course = Course.objects.create(
-            name="Matemática",
-            code="MAT101",
-        )
-        Monitoring.objects.create(
-            course=self.course,
-            monitor=self.monitor,
-            professor=self.professor,
-            status=Monitoring.Status.ACTIVE,
-            start_date=date.today(),
-        )
-        self.ticket = Ticket.objects.create(
-            student=self.student,
-            course=self.course,
-            subject="Frações",
-            description="Como somo frações?",
+        self.database.collection("tickets").document("physics-ticket").set(
+            {
+                "student_uid": self.student.uid,
+                "course_id": "FIS",
+                "subject": "Forças",
+                "description": "Dúvida em física.",
+                "status": "OPEN",
+                "priority": "MEDIUM",
+                "created_at": now,
+                "updated_at": now,
+            }
         )
 
-    def test_assigned_staff_sees_course_ticket_without_monitoring_fk(self):
-        self.client.force_login(self.monitor)
+    def test_monitor_only_sees_tickets_for_assigned_course(self):
+        with patch("firebase_backend.repository._db", return_value=self.database):
+            tickets = list_tickets(self.math_monitor)
 
-        response = self.client.get(reverse("monitor_tickets"))
+        self.assertEqual([ticket.id for ticket in tickets], ["math-ticket"])
+
+    def test_api_serializes_shared_ticket_and_conversation(self):
+        with patch("firebase_backend.repository._db", return_value=self.database):
+            ticket = list_tickets(self.math_monitor)[0]
+            ticket.messages = [
+                MessageRecord(
+                    id="answer-1",
+                    ticket_id=ticket.id,
+                    author=self.math_monitor,
+                    message="Some os numeradores.",
+                    created_at=ticket.created_at,
+                )
+            ]
+
+        request = APIRequestFactory().get("/api/tickets/")
+        force_authenticate(request, user=self.math_monitor)
+        with patch("tickets.views.list_tickets", return_value=[ticket]):
+            response = TicketViewSet.as_view({"get": "list"})(request)
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Frações")
-
-    def test_staff_answer_is_shown_to_student_as_answered(self):
-        self.client.force_login(self.monitor)
-        response = self.client.post(
-            reverse("ticket_detail", args=[self.ticket.pk]),
-            {"message": "Some os numeradores após igualar os denominadores."},
+        self.assertEqual(response.data[0]["course"], "MAT")
+        self.assertEqual(
+            response.data[0]["messages"][0]["author_name"],
+            "math-monitor",
         )
 
-        self.assertRedirects(
-            response,
-            reverse("ticket_detail", args=[self.ticket.pk]),
+    def test_unassigned_monitor_cannot_read_or_reply_to_another_course(self):
+        with patch("firebase_backend.repository._db", return_value=self.database):
+            self.assertIsNone(
+                get_ticket_for_user("physics-ticket", self.math_monitor)
+            )
+            with self.assertRaises(PermissionDenied):
+                add_message(
+                    self.math_monitor,
+                    "physics-ticket",
+                    "Resposta indevida.",
+                )
+
+    def test_monitor_reply_is_atomic_and_marks_shared_ticket_answered(self):
+        with patch("firebase_backend.repository._db", return_value=self.database):
+            add_message(
+                self.math_monitor,
+                "math-ticket",
+                "Some os numeradores.",
+            )
+
+        ticket = self.database.collection("tickets").document("math-ticket").get()
+        messages = list(
+            self.database.collection("tickets")
+            .document("math-ticket")
+            .collection("messages")
+            .stream()
         )
-        self.ticket.refresh_from_db()
-        self.assertEqual(self.ticket.status, Ticket.Status.ANSWERED)
-        self.assertTrue(
-            TicketMessage.objects.filter(
-                ticket=self.ticket,
-                author=self.monitor,
-            ).exists()
+        self.assertEqual(ticket.to_dict()["status"], "ANSWERED")
+        self.assertEqual(messages[0].to_dict()["message"], "Some os numeradores.")
+
+    def test_closed_ticket_rejects_reply(self):
+        ticket = self.database.collection("tickets").document("math-ticket")
+        ticket.update({"status": "CLOSED"})
+
+        with patch("firebase_backend.repository._db", return_value=self.database):
+            with self.assertRaises(ValidationError):
+                add_message(self.math_monitor, "math-ticket", "Resposta tardia.")
+
+    def test_student_ticket_is_persisted_in_shared_firestore_collection(self):
+        with patch("firebase_backend.repository._db", return_value=self.database):
+            ticket = create_ticket(
+                self.student,
+                "MAT",
+                "Equações",
+                "Como resolver equações do primeiro grau?",
+            )
+
+        stored = self.database.collection("tickets").document(ticket.id).get()
+        self.assertEqual(stored.to_dict()["student_uid"], self.student.uid)
+        self.assertEqual(stored.to_dict()["course_id"], "MAT")
+        self.assertEqual(stored.to_dict()["status"], "OPEN")
+
+    def test_professor_assigns_monitor_and_course_becomes_visible_to_students(self):
+        with patch("firebase_backend.repository._db", return_value=self.database):
+            course = create_course(
+                "QUI",
+                "Química",
+                "Introdução à química.",
+                self.professor,
+            )
+            assign_monitor(course, self.physics_monitor.uid, self.professor)
+            active_courses = list_active_courses_for_students()
+
+        self.assertIn("QUI", {course.id for course in active_courses})
+        assignment = self.database.collection("monitorings").document(
+            f"QUI_{self.physics_monitor.uid}"
+        ).get()
+        self.assertEqual(assignment.to_dict()["professor_uid"], self.professor.uid)
+        self.assertEqual(assignment.to_dict()["status"], "ACTIVE")
+
+
+class FirebaseAuthenticationTests(SimpleTestCase):
+    def setUp(self):
+        self.student = user("student-uid", "ALUNO", "student")
+
+    def test_firebase_cookie_resolves_shared_firestore_profile(self):
+        request = RequestFactory().get(
+            "/",
+            HTTP_COOKIE="firebase_session=valid-cookie",
         )
-
-        self.client.force_login(self.student)
-        response = self.client.get(reverse("ticket_list"))
-        self.assertContains(response, "Respondido")
-        self.assertContains(response, "Ver conversa")
-
-        response = self.client.get(
-            reverse("ticket_detail", args=[self.ticket.pk])
-        )
-        self.assertContains(
-            response,
-            "Some os numeradores após igualar os denominadores.",
-        )
-
-    def test_unassigned_monitor_cannot_view_course_ticket(self):
-        self.client.force_login(self.other_monitor)
-
-        response = self.client.get(
-            reverse("ticket_detail", args=[self.ticket.pk])
-        )
-
-        self.assertEqual(response.status_code, 404)
-
-    def test_student_cannot_open_ticket_for_course_without_active_monitoring(self):
-        unstaffed_course = Course.objects.create(
-            name="Física",
-            code="FIS101",
-        )
-        self.client.force_login(self.student)
-
-        response = self.client.post(
-            reverse("ticket_create"),
-            {
-                "course": unstaffed_course.pk,
-                "subject": "Dúvida sem destinatário",
-                "description": "Esta dúvida não deve ser criada.",
-            },
-        )
-
-        self.assertEqual(response.status_code, 404)
-        self.assertFalse(
-            Ticket.objects.filter(
-                subject="Dúvida sem destinatário"
-            ).exists()
-        )
-
-    def test_api_staff_reply_updates_ticket_status(self):
-        client = APIClient()
-        client.force_authenticate(user=self.professor)
-
-        response = client.post(
-            reverse("message-list"),
-            {
-                "ticket": self.ticket.pk,
-                "message": "Vamos revisar esse conteúdo na monitoria.",
-            },
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, 201)
-        self.ticket.refresh_from_db()
-        self.assertEqual(self.ticket.status, Ticket.Status.ANSWERED)
-
-    def test_api_student_cannot_open_ticket_without_active_monitoring(self):
-        course_without_monitor = Course.objects.create(
-            name="Astronomia",
-            code="AST101",
-        )
-        client = APIClient()
-        client.force_authenticate(user=self.student)
-
-        response = client.post(
-            reverse("ticket-list"),
-            {
-                "course": course_without_monitor.pk,
-                "subject": "Planetas",
-                "description": "Dúvida sem monitoria.",
-            },
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, 400)
-        self.assertFalse(
-            Ticket.objects.filter(course=course_without_monitor).exists()
-        )
-
-    def test_monitor_cannot_view_ticket_from_another_discipline(self):
-        another_course = Course.objects.create(
-            name="Química",
-            code="QUI101",
-        )
-        Monitoring.objects.create(
-            course=another_course,
-            monitor=self.other_monitor,
-            professor=self.professor,
-            status=Monitoring.Status.ACTIVE,
-            start_date=date.today(),
-        )
-        another_ticket = Ticket.objects.create(
-            student=self.student,
-            course=another_course,
-            subject="Ligações químicas",
-            description="Dúvida da outra disciplina.",
-        )
-        self.client.force_login(self.monitor)
-
-        response = self.client.get(
-            reverse("ticket_detail", args=[another_ticket.pk])
-        )
-
-        self.assertEqual(response.status_code, 404)
-        self.assertFalse(
-            Ticket.objects.filter(
-                pk__in=tickets_for_user(self.monitor).values("pk")
-            ).filter(pk=another_ticket.pk).exists()
-        )
-
-    def test_monitor_cannot_reply_to_ticket_from_another_discipline_via_api(self):
-        another_course = Course.objects.create(
-            name="Química",
-            code="QUI102",
-        )
-        Monitoring.objects.create(
-            course=another_course,
-            monitor=self.other_monitor,
-            professor=self.professor,
-            status=Monitoring.Status.ACTIVE,
-            start_date=date.today(),
-        )
-        another_ticket = Ticket.objects.create(
-            student=self.student,
-            course=another_course,
-            subject="Reações",
-            description="Dúvida de química.",
-        )
-        client = APIClient()
-        client.force_authenticate(user=self.monitor)
-
-        response = client.post(
-            reverse("message-list"),
-            {
-                "ticket": another_ticket.pk,
-                "message": "Esta resposta não deve ser aceita.",
-            },
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, 403)
-        self.assertFalse(
-            TicketMessage.objects.filter(ticket=another_ticket).exists()
-        )
-
-    def test_ticket_api_does_not_allow_editing_after_creation(self):
-        client = APIClient()
-        client.force_authenticate(user=self.monitor)
-
-        response = client.patch(
-            reverse("ticket-detail", args=[self.ticket.pk]),
-            {"subject": "Assunto alterado"},
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, 405)
-
-    def test_professor_can_create_course_and_assign_monitor(self):
-        self.client.force_login(self.professor)
-
-        response = self.client.post(
-            reverse("professor_course_create"),
-            {
-                "code": "INF201",
-                "name": "Informática Aplicada",
-                "description": "Conteúdo de informática.",
-            },
-        )
-        course = Course.objects.get(code="INF201")
-        self.assertEqual(course.created_by, self.professor)
-        self.assertRedirects(
-            response,
-            reverse(
-                "professor_course_assignments",
-                args=[course.pk],
+        with (
+            patch(
+                "firebase_backend.middleware.verify_session_cookie",
+                return_value={"uid": self.student.uid},
             ),
-        )
-
-        response = self.client.post(
-            reverse("professor_course_assignments", args=[course.pk]),
-            {"monitor": self.monitor.pk},
-        )
-
-        self.assertRedirects(
-            response,
-            reverse(
-                "professor_course_assignments",
-                args=[course.pk],
+            patch(
+                "firebase_backend.middleware.get_user",
+                return_value=self.student,
             ),
-        )
-        self.assertTrue(
-            Monitoring.objects.filter(
-                course=course,
-                professor=self.professor,
-                monitor=self.monitor,
-                status=Monitoring.Status.ACTIVE,
-            ).exists()
-        )
+        ):
+            response = FirebaseSessionMiddleware(lambda req: req.user)(request)
 
-    def test_professor_cannot_manage_another_professors_course(self):
-        course = Course.objects.create(
-            name="Física avançada",
-            code="FIS201",
-            created_by=self.professor,
-        )
-        another_professor = User.objects.create_user(
-            username="outro-professor",
-            password="valid-test-password",
-            tipo=User.TipoUsuario.PROFESSOR,
-        )
-        course.created_by = another_professor
-        course.save(update_fields=["created_by"])
-        self.client.force_login(self.professor)
+        self.assertEqual(response, self.student)
 
-        response = self.client.get(
-            reverse("professor_course_assignments", args=[course.pk])
-        )
+    def test_missing_firebase_cookie_cannot_reuse_legacy_django_login(self):
+        request = RequestFactory().get("/")
+        request.user = self.student
 
-        self.assertEqual(response.status_code, 404)
+        response = FirebaseSessionMiddleware(lambda req: req.user)(request)
 
-    def test_public_registration_always_creates_student(self):
-        response = self.client.post(
+        self.assertIsInstance(response, AnonymousUser)
+
+    def test_login_page_renders_without_connecting_to_firebase(self):
+        response = self.client.get(reverse("login"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'name="email"')
+
+    @patch("web.views.ensure_student_profile")
+    @patch("web.views._set_firebase_cookie")
+    @patch("web.views.auth.verify_id_token", return_value={"uid": "created-uid"})
+    @patch(
+        "web.views.create_user",
+        return_value={"idToken": "firebase-id-token"},
+    )
+    def test_public_registration_creates_only_student_profile(
+        self,
+        _create_user,
+        _verify_token,
+        set_cookie,
+        create_profile,
+    ):
+        set_cookie.return_value = HttpResponseRedirect("/")
+        client = self.client
+        result = client.post(
             reverse("register"),
             {
-                "username": "publico",
-                "first_name": "Usuário",
-                "last_name": "Teste",
-                "email": "publico@example.invalid",
-                "password": "Public-test-password-823!",
-                "password_confirm": "Public-test-password-823!",
-                "tipo": User.TipoUsuario.PROFESSOR,
+                "first_name": "Novo",
+                "last_name": "Aluno",
+                "email": "novo@example.test",
+                "password": "Valid-Test-Password-238!",
+                "password_confirm": "Valid-Test-Password-238!",
+                "tipo": "PROFESSOR",
             },
         )
 
-        self.assertRedirects(response, reverse("dashboard"))
-        user = User.objects.get(username="publico")
-        self.assertEqual(user.tipo, User.TipoUsuario.ALUNO)
-
-    @override_settings(DEBUG=True)
-    def test_seed_demo_creates_disciplines_and_role_accounts(self):
-        password = f"Demo-Only-{token_urlsafe(16)}!"
-        with patch(
-            "courses.management.commands.seed_demo.getpass",
-            side_effect=[password, password],
-        ) as getpass_mock:
-            output = StringIO()
-            call_command("seed_demo", stdout=output)
-
-        self.assertEqual(Course.objects.filter(code__startswith="DEMO-").count(), 5)
-        self.assertEqual(
-            Monitoring.objects.filter(
-                course__code__startswith="DEMO-",
-                status=Monitoring.Status.ACTIVE,
-            ).count(),
-            5,
+        self.assertEqual(result.status_code, 302)
+        self.assertTrue(_create_user.called)
+        self.assertTrue(_verify_token.called)
+        create_profile.assert_called_once_with(
+            "created-uid",
+            "novo@example.test",
+            "Novo",
+            "Aluno",
         )
-        for code, username in (
-            ("DEMO-INF", "demo_monitor_informatica"),
-            ("DEMO-FIS", "demo_monitor_fisica"),
-            ("DEMO-QUI", "demo_monitor_quimica"),
-            ("DEMO-MAT", "demo_monitor_matematica"),
-            ("DEMO-BIO", "demo_monitor_biologia"),
-        ):
-            self.assertTrue(
-                Monitoring.objects.filter(
-                    course__code=code,
-                    monitor__username=username,
-                    status=Monitoring.Status.ACTIVE,
-                ).exists()
-            )
-        self.assertEqual(
-            User.objects.get(username="demo_professor").tipo,
-            User.TipoUsuario.PROFESSOR,
-        )
-        self.assertEqual(
-            User.objects.get(username="demo_monitor_informatica").tipo,
-            User.TipoUsuario.MONITOR,
-        )
-        self.assertEqual(getpass_mock.call_count, 2)
-        self.assertNotIn(password, output.getvalue())

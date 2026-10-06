@@ -68,4 +68,10 @@
 
 {% endif %}
 
+<script>
+    window.setInterval(() => {
+        if (document.visibilityState === "visible") window.location.reload();
+    }, 15000);
+</script>
+
 {% endblock %}

@@ -1,66 +1,91 @@
-from rest_framework import mixins, viewsets
-from rest_framework.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
+from rest_framework import status, viewsets
+from rest_framework.exceptions import PermissionDenied as APIPermissionDenied
+from rest_framework.exceptions import ValidationError as APIValidationError
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 
-from .models import Ticket, TicketMessage
-from .querysets import tickets_for_user
-from .serializers import TicketSerializer, TicketMessageSerializer
+from firebase_backend.repository import (
+    add_message,
+    create_ticket,
+    get_ticket_for_user,
+    list_messages,
+    list_tickets,
+)
+from .serializers import (
+    TicketMessageCreateSerializer,
+    TicketMessageSerializer,
+    TicketSerializer,
+)
 
 
-class TicketViewSet(
-    mixins.ListModelMixin,
-    mixins.RetrieveModelMixin,
-    mixins.CreateModelMixin,
-    viewsets.GenericViewSet,
-):
-    serializer_class = TicketSerializer
+class TicketViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
 
-    def get_queryset(self):
-        return tickets_for_user(self.request.user).order_by("-created_at")
+    def list(self, request):
+        tickets = list_tickets(request.user, include_messages=True)
+        return Response(TicketSerializer(tickets, many=True).data)
 
-    def perform_create(self, serializer):
-        user = self.request.user
+    def retrieve(self, request, pk=None):
+        ticket = get_ticket_for_user(pk, request.user)
+        if ticket is None:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        return Response(TicketSerializer(ticket).data)
 
-        if user.tipo != "ALUNO" and not user.is_superuser:
-            raise PermissionDenied(
-                "Somente alunos podem abrir tickets."
+    def create(self, request):
+        if request.user.tipo != "ALUNO":
+            raise APIPermissionDenied("Somente alunos podem abrir dúvidas.")
+        serializer = TicketSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            ticket = create_ticket(
+                request.user,
+                serializer.validated_data["course_id"],
+                serializer.validated_data["subject"],
+                serializer.validated_data["description"],
             )
+        except ValidationError as exception:
+            raise APIValidationError(exception.messages) from exception
+        return Response(
+            TicketSerializer(ticket).data,
+            status=status.HTTP_201_CREATED,
+        )
 
-        serializer.save(student=user)
 
-
-class TicketMessageViewSet(
-    mixins.ListModelMixin,
-    mixins.RetrieveModelMixin,
-    mixins.CreateModelMixin,
-    viewsets.GenericViewSet,
-):
-    serializer_class = TicketMessageSerializer
+class TicketMessageViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
 
-    def get_queryset(self):
-        return TicketMessage.objects.filter(
-            ticket__in=tickets_for_user(self.request.user)
-        ).order_by("created_at")
+    def list(self, request):
+        messages = [
+            message
+            for ticket in list_tickets(request.user, include_messages=True)
+            for message in ticket.messages
+        ]
+        messages.sort(key=lambda message: message.created_at)
+        return Response(TicketMessageSerializer(messages, many=True).data)
 
-    def perform_create(self, serializer):
-        user = self.request.user
-        ticket = serializer.validated_data["ticket"]
+    def retrieve(self, request, pk=None):
+        for ticket in list_tickets(request.user, include_messages=True):
+            for message in ticket.messages:
+                if message.id == pk:
+                    return Response(TicketMessageSerializer(message).data)
+        return Response(status=status.HTTP_404_NOT_FOUND)
 
-        if not tickets_for_user(user).filter(pk=ticket.pk).exists():
-            raise PermissionDenied(
-                "Você não tem acesso a este ticket."
+    def create(self, request):
+        serializer = TicketMessageCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            add_message(
+                request.user,
+                serializer.validated_data["ticket"],
+                serializer.validated_data["message"],
             )
-
-        if ticket.status in ("RESOLVED", "CLOSED"):
-            raise PermissionDenied(
-                "Não é possível responder a um ticket encerrado."
-            )
-
-        message = serializer.save(author=user)
-        if user.is_superuser or user.tipo in ("MONITOR", "PROFESSOR", "COORDENADOR"):
-            message.ticket.status = Ticket.Status.ANSWERED
-        else:
-            message.ticket.status = Ticket.Status.IN_PROGRESS
-        message.ticket.save(update_fields=["status", "updated_at"])
+        except PermissionDenied as exception:
+            raise APIPermissionDenied(str(exception)) from exception
+        except ValidationError as exception:
+            raise APIValidationError(exception.messages) from exception
+        message = list_messages(serializer.validated_data["ticket"])[-1]
+        return Response(
+            TicketMessageSerializer(message).data,
+            status=status.HTTP_201_CREATED,
+        )

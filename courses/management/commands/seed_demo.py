@@ -1,26 +1,52 @@
-from datetime import date
 from getpass import getpass
 
 from django.conf import settings
-from django.contrib.auth.password_validation import validate_password
-from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError
-from django.db import transaction
+from firebase_admin import auth
 
-from courses.models import Course
-from monitoring.models import Monitoring
-from users.models import User
+from firebase_backend.repository import (
+    assign_monitor,
+    create_course,
+    create_user_profile,
+    get_course_by_code,
+    get_user,
+)
 
 
-DEMO_USERS = {
-    "demo_professor": ("Professor", User.TipoUsuario.PROFESSOR),
-    "demo_student": ("Aluno", User.TipoUsuario.ALUNO),
-    "demo_monitor_informatica": ("Monitor de Informática", User.TipoUsuario.MONITOR),
-    "demo_monitor_fisica": ("Monitor de Física", User.TipoUsuario.MONITOR),
-    "demo_monitor_quimica": ("Monitor de Química", User.TipoUsuario.MONITOR),
-    "demo_monitor_matematica": ("Monitor de Matemática", User.TipoUsuario.MONITOR),
-    "demo_monitor_biologia": ("Monitor de Biologia", User.TipoUsuario.MONITOR),
-}
+DEMO_USERS = (
+    ("demo_professor", "demo_professor@example.com", "Professor", "PROFESSOR"),
+    ("demo_student", "demo_student@example.com", "Aluno", "ALUNO"),
+    (
+        "demo_monitor_informatica",
+        "demo_monitor_informatica@example.com",
+        "Monitor de Informática",
+        "MONITOR",
+    ),
+    (
+        "demo_monitor_fisica",
+        "demo_monitor_fisica@example.com",
+        "Monitor de Física",
+        "MONITOR",
+    ),
+    (
+        "demo_monitor_quimica",
+        "demo_monitor_quimica@example.com",
+        "Monitor de Química",
+        "MONITOR",
+    ),
+    (
+        "demo_monitor_matematica",
+        "demo_monitor_matematica@example.com",
+        "Monitor de Matemática",
+        "MONITOR",
+    ),
+    (
+        "demo_monitor_biologia",
+        "demo_monitor_biologia@example.com",
+        "Monitor de Biologia",
+        "MONITOR",
+    ),
+)
 
 DEMO_COURSES = (
     ("DEMO-INF", "Informática", "Fundamentos de informática.", "demo_monitor_informatica"),
@@ -32,87 +58,73 @@ DEMO_COURSES = (
 
 
 class Command(BaseCommand):
-    help = "Cria contas, disciplinas e monitorias de demonstração."
+    help = "Cria contas Firebase e disciplinas de demonstração no Firestore."
+
+    def add_arguments(self, parser):
+        parser.add_argument(
+            "--project-id",
+            required=True,
+            help="ID exato do projeto Firebase que receberá os dados de teste.",
+        )
 
     def handle(self, *args, **options):
         if not settings.DEBUG:
             raise CommandError(
                 "Dados de demonstração só podem ser criados em ambiente local."
             )
-        _ = args, options
+        if options["project_id"] != settings.FIREBASE_PROJECT_ID:
+            raise CommandError(
+                "O ID informado precisa corresponder a FIREBASE_PROJECT_ID no .env."
+            )
+        _ = args
         password = getpass("Defina a senha local para as contas de demonstração: ")
         confirmation = getpass("Confirme a senha: ")
-        if not password:
-            raise CommandError("A senha não pode ficar vazia.")
+        if len(password) < 8:
+            raise CommandError("A senha precisa ter pelo menos 8 caracteres.")
         if password != confirmation:
             raise CommandError("As senhas digitadas não coincidem.")
-        try:
-            validate_password(password)
-        except ValidationError as error:
-            raise CommandError("; ".join(error.messages)) from error
 
-        with transaction.atomic():
-            users = {}
-            for username, (first_name, role) in DEMO_USERS.items():
-                email = f"{username}@example.invalid"
-                user, created = User.objects.get_or_create(
-                    username=username,
-                    defaults={
-                        "first_name": first_name,
-                        "last_name": "Demonstração",
-                        "email": email,
-                        "tipo": role,
-                    },
+        users = {}
+        for username, email, first_name, role in DEMO_USERS:
+            try:
+                firebase_user = auth.get_user_by_email(email)
+                auth.update_user(
+                    firebase_user.uid,
+                    password=password,
+                    display_name=first_name,
+                    disabled=False,
                 )
-                if not created and (
-                    user.email != email
-                    or user.is_staff
-                    or user.is_superuser
-                ):
-                    raise CommandError(
-                        f"O usuário reservado {username} já pertence a outra conta."
-                    )
-                user.first_name = first_name
-                user.last_name = "Demonstração"
-                user.email = email
-                user.tipo = role
-                user.is_active = True
-                user.is_staff = False
-                user.is_superuser = False
-                user.set_password(password)
-                user.save()
-                users[username] = user
+            except auth.UserNotFoundError:
+                firebase_user = auth.create_user(
+                    email=email,
+                    password=password,
+                    display_name=first_name,
+                )
+            create_user_profile(
+                firebase_user.uid,
+                username,
+                email,
+                first_name,
+                role,
+            )
+            users[username] = get_user(firebase_user.uid)
 
-            professor = users["demo_professor"]
-            for code, name, description, monitor_username in DEMO_COURSES:
-                course, _ = Course.objects.update_or_create(
-                    code=code,
-                    defaults={
-                        "name": name,
-                        "description": description,
-                        "active": True,
-                        "created_by": professor,
-                    },
-                )
-                monitor = users[monitor_username]
-                Monitoring.objects.update_or_create(
-                    course=course,
-                    monitor=monitor,
-                    professor=professor,
-                    defaults={
-                        "status": Monitoring.Status.ACTIVE,
-                        "start_date": date.today(),
-                        "end_date": None,
-                        "description": "Monitoria de demonstração.",
-                    },
-                )
+        professor = users["demo_professor"]
+        for code, name, description, monitor_username in DEMO_COURSES:
+            course = get_course_by_code(code)
+            if course is None:
+                course = create_course(code, name, description, professor)
+            monitor = users[monitor_username]
+            assign_monitor(course, monitor.uid, professor)
 
         self.stdout.write(
             self.style.SUCCESS(
-                "Dados de demonstração criados. A senha foi definida localmente "
-                "e não foi exibida."
+                "Contas Firebase e dados de demonstração preparados."
             )
         )
         self.stdout.write("Usuários disponíveis:")
-        for username in DEMO_USERS:
-            self.stdout.write(f"  {username}")
+        for username, email, _, _ in DEMO_USERS:
+            self.stdout.write(f"  {username} ({email})")
+        self.stdout.write(
+            "As senhas foram definidas localmente e não foram exibidas."
+        )

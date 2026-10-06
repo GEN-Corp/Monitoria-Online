@@ -20,7 +20,7 @@
 
     <p>
         <strong>Status:</strong>
-        {{ ticket.get_status_display }}
+        <span id="ticket-status">{{ ticket.get_status_display }}</span>
     </p>
 
     <hr>
@@ -38,9 +38,10 @@
 
     <h2>Conversa</h2>
 
-    {% for message in ticket.messages.all %}
+    <div id="ticket-messages">
+    {% for message in ticket.messages %}
 
-        <div style="
+        <div data-message-id="{{ message.id }}" style="
             padding: 12px;
             margin-bottom: 10px;
             background: #f4f6f8;
@@ -63,17 +64,18 @@
 
     {% empty %}
 
-        <p>
+        <p id="empty-message">
             Nenhuma resposta ainda.
         </p>
 
     {% endfor %}
+    </div>
 
 </div>
 
 {% if can_reply %}
 
-<div class="card">
+<div class="card" id="reply-card">
 
     <h2>
         {% if user.tipo == "ALUNO" %}
@@ -111,6 +113,57 @@
         <p>Esta dúvida foi encerrada e não aceita novas mensagens.</p>
     </div>
 {% endif %}
+
+<script>
+    const ticketId = "{{ ticket.id|escapejs }}";
+    const messageList = document.getElementById("ticket-messages");
+    const ticketStatus = document.getElementById("ticket-status");
+
+    async function refreshConversation() {
+        if (document.visibilityState !== "visible") return;
+        try {
+            const response = await fetch(`/api/tickets/${encodeURIComponent(ticketId)}/`);
+            if (response.redirected) {
+                window.location.assign(response.url);
+                return;
+            }
+            if (!response.ok) return;
+            const ticket = await response.json();
+            ticketStatus.textContent = {
+                OPEN: "Aberto",
+                IN_PROGRESS: "Em atendimento",
+                ANSWERED: "Respondido",
+                RESOLVED: "Resolvido",
+                CLOSED: "Fechado"
+            }[ticket.status] || ticket.status;
+            if (["RESOLVED", "CLOSED"].includes(ticket.status)) {
+                document.getElementById("reply-card")?.remove();
+            }
+            const currentMessageIds = new Set(
+                Array.from(messageList.children).map((node) => node.dataset.messageId)
+            );
+            for (const message of ticket.messages) {
+                if (currentMessageIds.has(message.id)) continue;
+                document.getElementById("empty-message")?.remove();
+                const card = document.createElement("div");
+                card.dataset.messageId = message.id;
+                card.style.cssText = "padding:12px;margin-bottom:10px;background:#f4f6f8;border-radius:8px";
+                const header = document.createElement("strong");
+                header.textContent = message.author_name;
+                const time = document.createElement("small");
+                time.textContent = ` ${new Date(message.created_at).toLocaleString("pt-BR")}`;
+                const body = document.createElement("p");
+                body.textContent = message.message;
+                card.append(header, time, body);
+                messageList.append(card);
+            }
+        } catch (error) {
+            console.error("Não foi possível atualizar a conversa.", error);
+        }
+    }
+
+    window.setInterval(refreshConversation, 5000);
+</script>
 
 {% if user.tipo == "ALUNO" %}
     <a href="{% url 'ticket_list' %}">Voltar para minhas dúvidas</a>

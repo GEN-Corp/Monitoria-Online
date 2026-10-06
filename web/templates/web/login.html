@@ -8,19 +8,31 @@
 
     <p>Entre na sua conta</p>
 
-    {% if form.errors %}
-        <p>Usuário ou senha inválidos.</p>
+    {% if error %}
+        <p role="alert">{{ error }}</p>
     {% endif %}
 
     <form method="post">
 
         {% csrf_token %}
 
-        <label>Usuário</label>
-        {{ form.username }}
+        <label for="email">E-mail</label>
+        <input
+            type="email"
+            name="email"
+            id="email"
+            autocomplete="email"
+            required
+        >
 
-        <label>Senha</label>
-        {{ form.password }}
+        <label for="password">Senha</label>
+        <input
+            type="password"
+            name="password"
+            id="password"
+            autocomplete="current-password"
+            required
+        >
 
         <button type="submit">
             Entrar

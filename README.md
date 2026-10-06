@@ -11,28 +11,35 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 python manage.py migrate
-python manage.py seed_demo
+Copy-Item .env.example .env
+# Preencha FIREBASE_PROJECT_ID, FIREBASE_API_KEY e credenciais Firebase em .env
+python manage.py seed_demo --project-id SEU_ID_DO_PROJETO_FIREBASE
 python manage.py runserver
 ```
 
-`seed_demo` cria um professor, um aluno, cinco monitores e monitorias ativas
-para Informática, Física, Química, Matemática e Biologia. O comando pede uma
-senha local no terminal para todas as contas de demonstração; ela não é exibida
-nem armazenada nos arquivos versionados. Os nomes de usuário estão em
+Configure `.env` a partir de [.env.example](./.env.example), habilite
+Authentication por e-mail/senha e Cloud Firestore no Firebase Console e forneça
+credenciais de serviço pelo Application Default Credentials ou emuladores.
+O comando `seed_demo` exige o ID explícito do projeto para evitar criar contas
+de teste acidentalmente no projeto errado.
+O comando `seed_demo` cria um professor, um aluno, cinco monitores e monitorias
+ativas para Informática, Física, Química, Matemática e Biologia. Ele define
+localmente uma senha comum para as contas de demonstração; a senha não é exibida
+nem armazenada no Git. Os usuários de teste estão listados em
 [comandos.txt](./comandos.txt).
+Contas que existiam somente no banco SQLite local não são copiadas
+automaticamente para Firebase Authentication; crie-as novamente no Firebase.
 
 O cadastro público cria apenas alunos. Professores podem criar disciplinas em
 **Gerenciar disciplinas e monitores** e associar monitores ativos. Monitores
 veem e respondem somente dúvidas de disciplinas às quais estão associados.
 
-Para publicar em uma plataforma de hospedagem, use o `Procfile` e configure
-Gunicorn, PostgreSQL (`DATABASE_URL`) e as variáveis `DJANGO_DEBUG=false`,
-`DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS` e `DJANGO_CSRF_TRUSTED_ORIGINS`.
-Use um provedor com HTTPS e mantenha os segredos nas variáveis protegidas da
-hospedagem, não no repositório.
-Execute `python manage.py collectstatic --noinput` e `python manage.py migrate`
-no processo de implantação. Consulte [.env.example](./.env.example) para os
-nomes das variáveis, sem preencher esse arquivo com segredos.
+Firestore armazena os dados compartilhados, Firebase Authentication valida
+contas e Django continua servindo as páginas e a API. As conversas consultam
+novas mensagens a cada cinco segundos. Para publicar Django, use HTTPS num
+serviço como Google Cloud Run e configure as variáveis documentadas em
+[comandos.txt](./comandos.txt). Firebase Hosting sozinho não executa Django.
+Mantenha segredos nas variáveis protegidas do provedor, nunca no repositório.
 
 **Instituto Federal de Educação, Ciência e Tecnologia de São Paulo — IFSP**
 **Curso:** Técnico em Informática

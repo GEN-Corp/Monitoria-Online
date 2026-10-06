@@ -1,16 +1,127 @@
-from django.contrib.auth import login
-from django.contrib.auth.decorators import login_required
-from django.core.exceptions import PermissionDenied
-from django.db.models import Q
-from django.shortcuts import get_object_or_404, redirect, render
-from django.utils import timezone
+import logging
 
-from users.models import User
-from courses.models import Course
-from monitoring.models import Monitoring
-from tickets.models import Ticket, TicketMessage
-from tickets.querysets import tickets_for_user
-from .forms import CourseForm, MonitoringAssignmentForm
+from django.conf import settings
+from django.contrib.auth.decorators import login_required
+from django.core.exceptions import ImproperlyConfigured, PermissionDenied, ValidationError
+from django.shortcuts import redirect, render
+from django.views.decorators.http import require_POST
+from firebase_admin import auth
+
+from firebase_backend.identity import (
+    FirebaseIdentityError,
+    SESSION_COOKIE_NAME,
+    SESSION_DURATION,
+    create_session_cookie,
+    create_user,
+    sign_in,
+)
+from firebase_backend.repository import (
+    add_message,
+    assign_monitor,
+    create_course,
+    create_ticket,
+    ensure_student_profile,
+    get_course,
+    get_user,
+    get_ticket_for_user,
+    list_active_courses_for_students,
+    list_monitors,
+    list_professor_courses,
+    list_tickets,
+)
+from .forms import CourseForm, MonitoringAssignmentForm, RegistrationForm
+
+
+logger = logging.getLogger(__name__)
+
+
+def _set_firebase_cookie(response, id_token):
+    cookie = create_session_cookie(id_token)
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        cookie,
+        max_age=int(SESSION_DURATION.total_seconds()),
+        httponly=True,
+        secure=not settings.DEBUG,
+        samesite="Lax",
+        path="/",
+    )
+    return response
+
+
+def firebase_login(request):
+    error = None
+    if request.method == "POST":
+        email = request.POST.get("email", "").strip().lower()
+        password = request.POST.get("password", "")
+        try:
+            token_response = sign_in(email, password)
+            claims = auth.verify_id_token(token_response["idToken"])
+            if get_user(claims["uid"]) is None:
+                ensure_student_profile(claims["uid"], email)
+            response = redirect("dashboard")
+            return _set_firebase_cookie(response, token_response["idToken"])
+        except (
+            FirebaseIdentityError,
+            auth.InvalidIdTokenError,
+            ImproperlyConfigured,
+        ) as exception:
+            error = str(exception) or "E-mail ou senha inválidos."
+        except KeyError:
+            logger.exception("Firebase sign-in response did not contain an ID token.")
+            error = "O Firebase retornou uma resposta de login inválida."
+
+    return render(request, "web/login.html", {"error": error})
+
+
+def register(request):
+    form = RegistrationForm(request.POST or None)
+    error = None
+    if request.method == "POST" and form.is_valid():
+        try:
+            token_response = create_user(
+                form.cleaned_data["email"].strip().lower(),
+                form.cleaned_data["password"],
+            )
+            claims = auth.verify_id_token(token_response["idToken"])
+            ensure_student_profile(
+                claims["uid"],
+                form.cleaned_data["email"].strip().lower(),
+                form.cleaned_data["first_name"].strip(),
+                form.cleaned_data["last_name"].strip(),
+            )
+            response = redirect("dashboard")
+            return _set_firebase_cookie(response, token_response["idToken"])
+        except (
+            FirebaseIdentityError,
+            ValidationError,
+            ImproperlyConfigured,
+        ) as exception:
+            error = str(exception)
+        except KeyError:
+            logger.exception("Firebase registration response did not contain an ID token.")
+            error = "O Firebase retornou uma resposta de cadastro inválida."
+
+    return render(
+        request,
+        "web/register.html",
+        {"form": form, "error": error},
+    )
+
+
+@require_POST
+def firebase_logout(request):
+    response = redirect("login")
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        "",
+        max_age=0,
+        httponly=True,
+        secure=request.is_secure() or not settings.DEBUG,
+        path="/",
+        samesite="Lax",
+    )
+    return response
 
 
 @login_required
@@ -18,144 +129,76 @@ def dashboard(request):
     return render(request, "web/dashboard.html")
 
 
-def register(request):
-    if request.method == "POST":
-        username = request.POST.get("username")
-        first_name = request.POST.get("first_name")
-        last_name = request.POST.get("last_name")
-        email = request.POST.get("email")
-        password = request.POST.get("password")
-        password_confirm = request.POST.get("password_confirm")
-        if password != password_confirm:
-            return render(
-                request,
-                "web/register.html",
-                {"error": "As senhas não coincidem."},
-            )
-
-        if User.objects.filter(username=username).exists():
-            return render(
-                request,
-                "web/register.html",
-                {"error": "Esse usuário já existe."},
-            )
-
-        user = User.objects.create_user(
-            username=username,
-            first_name=first_name,
-            last_name=last_name,
-            email=email,
-            password=password,
-            tipo=User.TipoUsuario.ALUNO,
-        )
-
-        login(request, user)
-
-        return redirect("dashboard")
-
-    return render(request, "web/register.html")
-
-
 @login_required
 def ticket_list(request):
-    tickets = Ticket.objects.filter(
-        student=request.user
-    ).order_by("-created_at")
-
+    if request.user.tipo != "ALUNO":
+        raise PermissionDenied
     return render(
         request,
         "web/tickets.html",
-        {"tickets": tickets},
+        {"tickets": list_tickets(request.user)},
     )
 
 
 @login_required
 def ticket_create(request):
     if request.user.tipo != "ALUNO":
-        return redirect("dashboard")
+        raise PermissionDenied
 
-    courses = Course.objects.filter(
-        active=True,
-        monitorings__status="ACTIVE",
-    ).distinct()
-
+    courses = list_active_courses_for_students()
+    error = None
     if request.method == "POST":
-        course_id = request.POST.get("course")
-        subject = request.POST.get("subject")
-        description = request.POST.get("description")
-
-        course = get_object_or_404(
-            Course,
-            id=course_id,
-            active=True,
-            monitorings__status="ACTIVE",
-        )
-
-        Ticket.objects.create(
-            student=request.user,
-            course=course,
-            subject=subject,
-            description=description,
-        )
-
-        return redirect("ticket_list")
+        try:
+            create_ticket(
+                request.user,
+                request.POST.get("course", ""),
+                request.POST.get("subject", ""),
+                request.POST.get("description", ""),
+            )
+            return redirect("ticket_list")
+        except ValidationError as exception:
+            error = "; ".join(exception.messages)
 
     return render(
         request,
         "web/ticket_form.html",
-        {"courses": courses},
+        {"courses": courses, "error": error},
     )
+
 
 @login_required
 def monitor_tickets(request):
-    if request.user.tipo not in ["MONITOR", "PROFESSOR", "COORDENADOR"]:
-        if not request.user.is_superuser:
-            return redirect("dashboard")
-
-    tickets = tickets_for_user(request.user).order_by("-created_at")
-
+    if request.user.tipo not in {"MONITOR", "PROFESSOR", "COORDENADOR"}:
+        raise PermissionDenied
     return render(
         request,
         "web/monitor_tickets.html",
-        {"tickets": tickets},
+        {"tickets": list_tickets(request.user)},
     )
+
 
 @login_required
 def ticket_detail(request, ticket_id):
-    ticket = get_object_or_404(
-        tickets_for_user(request.user).select_related(
-            "student", "course", "monitoring"
-        ).prefetch_related("messages__author"),
-        pk=ticket_id,
-    )
+    ticket = get_ticket_for_user(ticket_id, request.user)
+    if ticket is None:
+        from django.http import Http404
+
+        raise Http404("Dúvida não encontrada.")
 
     error = None
-    can_reply = ticket.status not in (
-        Ticket.Status.RESOLVED,
-        Ticket.Status.CLOSED,
-    )
-
+    can_reply = ticket.status not in {"RESOLVED", "CLOSED"}
     if request.method == "POST":
-        message_text = request.POST.get("message", "").strip()
-        if not can_reply:
-            error = "Esta dúvida já foi encerrada."
-        elif not message_text:
-            error = "Escreva uma mensagem antes de enviar."
-        else:
-            TicketMessage.objects.create(
-                ticket=ticket,
-                author=request.user,
-                message=message_text,
+        try:
+            add_message(
+                request.user,
+                ticket.id,
+                request.POST.get("message", ""),
             )
-            if (
-                request.user.is_superuser
-                or request.user.tipo in ("MONITOR", "PROFESSOR", "COORDENADOR")
-            ):
-                ticket.status = Ticket.Status.ANSWERED
-            else:
-                ticket.status = Ticket.Status.IN_PROGRESS
-            ticket.save(update_fields=["status", "updated_at"])
             return redirect("ticket_detail", ticket_id=ticket.id)
+        except (PermissionDenied, ValidationError) as exception:
+            if isinstance(exception, PermissionDenied):
+                raise
+            error = "; ".join(exception.messages)
 
     return render(
         request,
@@ -164,86 +207,89 @@ def ticket_detail(request, ticket_id):
     )
 
 
-def professor_managed_courses(user):
-    return Course.objects.filter(
-        Q(created_by=user) | Q(monitorings__professor=user)
-    ).distinct()
-
-
 @login_required
 def professor_courses(request):
-    if request.user.tipo != User.TipoUsuario.PROFESSOR:
+    if request.user.tipo != "PROFESSOR":
         raise PermissionDenied
-
-    courses = professor_managed_courses(request.user).prefetch_related(
-        "monitorings__monitor"
-    )
     return render(
         request,
         "web/professor_courses.html",
-        {"courses": courses},
+        {"courses": list_professor_courses(request.user)},
     )
 
 
 @login_required
 def professor_course_create(request):
-    if request.user.tipo != User.TipoUsuario.PROFESSOR:
+    if request.user.tipo != "PROFESSOR":
         raise PermissionDenied
 
     form = CourseForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
-        course = form.save(commit=False)
-        course.created_by = request.user
-        course.save()
-        return redirect("professor_course_assignments", course_id=course.pk)
-
+        try:
+            course = create_course(
+                form.cleaned_data["code"],
+                form.cleaned_data["name"],
+                form.cleaned_data["description"],
+                request.user,
+            )
+        except ValidationError as exception:
+            form.add_error(None, "; ".join(exception.messages))
+        else:
+            return redirect(
+                "professor_course_assignments",
+                course_id=course.id,
+            )
     return render(request, "web/course_form.html", {"form": form})
 
 
 @login_required
 def professor_course_assignments(request, course_id):
-    if request.user.tipo != User.TipoUsuario.PROFESSOR:
+    if request.user.tipo != "PROFESSOR":
         raise PermissionDenied
+    course = get_course(course_id)
+    if course is None:
+        from django.http import Http404
 
-    course = get_object_or_404(
-        professor_managed_courses(request.user),
-        pk=course_id,
+        raise Http404("Disciplina não encontrada.")
+
+    courses = list_professor_courses(request.user)
+    managed_course = next(
+        (item for item in courses if item.id == course.id),
+        None,
     )
+    if managed_course is None:
+        from django.http import Http404
+
+        raise Http404("Disciplina não encontrada.")
+    course = managed_course
+
     form = MonitoringAssignmentForm(
         request.POST or None,
-        course=course,
+        monitors=list_monitors(exclude_course_id=course.id),
     )
-
     if request.method == "POST" and form.is_valid():
-        monitor = form.cleaned_data["monitor"]
-        assignment, created = Monitoring.objects.get_or_create(
-            course=course,
-            monitor=monitor,
-            professor=request.user,
-            defaults={
-                "status": Monitoring.Status.ACTIVE,
-                "start_date": timezone.localdate(),
-            },
-        )
-        if not created and assignment.status != Monitoring.Status.ACTIVE:
-            assignment.status = Monitoring.Status.ACTIVE
-            assignment.start_date = timezone.localdate()
-            assignment.end_date = None
-            assignment.save(
-                update_fields=["status", "start_date", "end_date"]
+        try:
+            assign_monitor(
+                course,
+                form.cleaned_data["monitor"],
+                request.user,
             )
-        return redirect("professor_course_assignments", course_id=course.pk)
+        except (PermissionDenied, ValidationError) as exception:
+            if isinstance(exception, PermissionDenied):
+                raise
+            form.add_error(None, "; ".join(exception.messages))
+        else:
+            return redirect(
+                "professor_course_assignments",
+                course_id=course.id,
+            )
 
-    assignments = Monitoring.objects.filter(
-        course=course,
-        professor=request.user,
-    ).select_related("monitor")
     return render(
         request,
         "web/course_assignments.html",
         {
             "course": course,
             "form": form,
-            "assignments": assignments,
+            "assignments": course.monitorings,
         },
     )

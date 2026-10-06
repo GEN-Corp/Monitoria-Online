@@ -19,6 +19,11 @@ staticfiles/
 .env
 .env.*
 !.env.example
+.firebase/
+serviceAccountKey.json
+firebase-service-account*.json
+*-firebase-adminsdk-*.json
+*.service-account.json
 
 # IDE
 .vscode/

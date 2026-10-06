@@ -1,8 +1,9 @@
-from django.contrib.auth import views as auth_views
 from django.urls import path
 
 from .views import (
     dashboard,
+    firebase_login,
+    firebase_logout,
     register,
     ticket_create,
     ticket_list,
@@ -19,15 +20,13 @@ urlpatterns = [
 
     path(
         "login/",
-        auth_views.LoginView.as_view(
-            template_name="web/login.html"
-        ),
+        firebase_login,
         name="login",
     ),
 
     path(
         "logout/",
-        auth_views.LogoutView.as_view(),
+        firebase_logout,
         name="logout",
     ),
 
@@ -56,7 +55,7 @@ urlpatterns = [
     ),
 
     path(
-    "tickets/<int:ticket_id>/",
+    "tickets/<str:ticket_id>/",
     ticket_detail,
     name="ticket_detail",
     ),
@@ -71,7 +70,7 @@ urlpatterns = [
         name="professor_course_create",
     ),
     path(
-        "professor/disciplinas/<int:course_id>/monitores/",
+        "professor/disciplinas/<str:course_id>/monitores/",
         professor_course_assignments,
         name="professor_course_assignments",
     ),

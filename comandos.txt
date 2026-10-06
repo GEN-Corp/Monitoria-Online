@@ -4,46 +4,79 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 python manage.py migrate
-python manage.py seed_demo
+Copy-Item .env.example .env
+# Preencha FIREBASE_PROJECT_ID, FIREBASE_API_KEY e as credenciais Firebase no .env
+python manage.py seed_demo --project-id SEU_ID_DO_PROJETO_FIREBASE
 python manage.py runserver
 
 O comando seed_demo solicita uma senha no terminal e a define para todas as
-contas de demonstração. A senha não aparece na tela e não fica salva no Git.
-O comando pode ser executado novamente para redefinir a senha das contas demo.
+contas de demonstração no Firebase Authentication. A senha não aparece na tela
+e não fica salva no Git. O comando verifica o ID do projeto explicitamente.
 
 CONTAS CRIADAS POR seed_demo
 
-Usuário                    Perfil
-demo_professor             Professor
-demo_student               Aluno
-demo_monitor_informatica   Monitor de Informática
-demo_monitor_fisica        Monitor de Física
-demo_monitor_quimica       Monitor de Química
-demo_monitor_matematica    Monitor de Matemática
-demo_monitor_biologia      Monitor de Biologia
+Usuário                    Perfil                     E-mail
+demo_professor             Professor                  demo_professor@example.com
+demo_student               Aluno                      demo_student@example.com
+demo_monitor_informatica   Monitor de Informática     demo_monitor_informatica@example.com
+demo_monitor_fisica        Monitor de Física          demo_monitor_fisica@example.com
+demo_monitor_quimica       Monitor de Química         demo_monitor_quimica@example.com
+demo_monitor_matematica    Monitor de Matemática      demo_monitor_matematica@example.com
+demo_monitor_biologia      Monitor de Biologia        demo_monitor_biologia@example.com
 
 As disciplinas de demonstração são Informática, Física, Química, Matemática e
 Biologia. Cada uma tem um monitor e uma monitoria ativa associados ao professor
 demo_professor.
 
-ACESSO PELA INTERNET
+CRIAR PROFESSOR OU MONITOR REAL
 
-O projeto inclui Procfile, suporte a Gunicorn, PostgreSQL e arquivos estáticos.
-Para publicar, escolha um provedor de hospedagem e crie um banco PostgreSQL.
-Configure no provedor as variáveis DJANGO_DEBUG=false, DJANGO_SECRET_KEY,
-DJANGO_ALLOWED_HOSTS, DJANGO_CSRF_TRUSTED_ORIGINS e DATABASE_URL.
-O provedor deve oferecer HTTPS e PostgreSQL gerenciado.
+Crie as contas com create_firebase_user. O comando solicita a senha duas vezes,
+sem exibi-la ou gravá-la:
+
+python manage.py create_firebase_user --project-id SEU_ID_DO_PROJETO_FIREBASE --email professor@exemplo.com --username professor --first-name Professor --role PROFESSOR
+python manage.py create_firebase_user --project-id SEU_ID_DO_PROJETO_FIREBASE --email monitor@exemplo.com --username monitor --first-name Monitor --role MONITOR
+
+Depois, o professor entra no sistema, cria a disciplina e associa o monitor.
+
+CONFIGURAR FIREBASE PARA DESENVOLVIMENTO
+
+1. No Firebase Console, crie/abra o projeto e habilite Authentication > E-mail/senha.
+2. Crie um banco Cloud Firestore em modo de produção.
+3. Em Configurações do projeto > Geral, copie o ID do projeto e a chave Web API.
+4. Copie .env.example para .env e preencha FIREBASE_PROJECT_ID e FIREBASE_API_KEY.
+   Para usar os emuladores, preencha também FIRESTORE_EMULATOR_HOST e
+   FIREBASE_AUTH_EMULATOR_HOST com 127.0.0.1:8080 e 127.0.0.1:9099.
+5. Para emuladores, instale o Firebase CLI e execute:
+   firebase emulators:start --only auth,firestore --project SEU_ID_DO_PROJETO_FIREBASE
+6. Para acessar o Firestore real localmente, configure
+   GOOGLE_APPLICATION_CREDENTIALS com o caminho de uma chave de conta de serviço.
+   Nunca adicione essa chave ao Git.
+7. Publique as regras e índices do repositório:
+   firebase deploy --only firestore:rules,firestore:indexes --project SEU_ID_DO_PROJETO_FIREBASE
+
+PUBLICAR O SERVIDOR
+
+O Firestore guarda os dados compartilhados. O Django precisa também de um
+servidor HTTPS, por exemplo Google Cloud Run; Firebase Hosting sozinho não
+executa o backend Django.
+
+No Google Cloud:
+1. Habilite Cloud Run, Cloud Build e Firestore.
+2. Use uma conta de serviço do Cloud Run com acesso ao Firestore e Firebase Authentication.
+3. Publique o projeto com Cloud Run a partir do repositório.
+4. Configure FIREBASE_PROJECT_ID, FIREBASE_API_KEY, DJANGO_DEBUG=false,
+   DJANGO_ALLOWED_HOSTS com o domínio run.app atribuído ao serviço,
+   DJANGO_CSRF_TRUSTED_ORIGINS com a origem HTTPS pública e DJANGO_SECRET_KEY.
+   Guarde DJANGO_SECRET_KEY no Secret Manager, não neste arquivo.
 
 Para gerar uma chave secreta localmente (cadastre o resultado diretamente nas
 variáveis protegidas do provedor, sem salvar o resultado no Git):
 python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
 
-Comando de build:
+Comandos de publicação:
 python -m pip install -r requirements.txt
 python manage.py collectstatic --noinput
-python manage.py migrate
 
-Comando de inicialização:
-gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 60
-
-Não publique senhas, chaves ou URLs de banco com credenciais neste arquivo.
+O Procfile inicia o servidor Gunicorn. As páginas de conversa consultam o
+servidor a cada cinco segundos para exibir novas respostas sem atualizar a tela.
+Nunca publique senhas, chaves privadas ou arquivos de conta de serviço.
