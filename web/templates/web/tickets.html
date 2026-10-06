@@ -54,6 +54,12 @@
                 {{ ticket.description }}
             </p>
 
+            <a href="{% url 'ticket_detail' ticket.id %}">
+                <button type="button">
+                    Ver conversa
+                </button>
+            </a>
+
         </div>
 
     {% endfor %}

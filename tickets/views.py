@@ -3,6 +3,7 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 
 from .models import Ticket, TicketMessage
+from .querysets import tickets_for_user
 from .serializers import TicketSerializer, TicketMessageSerializer
 
 
@@ -11,27 +12,7 @@ class TicketViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        user = self.request.user
-
-        if user.is_superuser or user.tipo == "COORDENADOR":
-            return Ticket.objects.all().order_by("-created_at")
-
-        if user.tipo == "ALUNO":
-            return Ticket.objects.filter(
-                student=user
-            ).order_by("-created_at")
-
-        if user.tipo == "MONITOR":
-            return Ticket.objects.filter(
-                monitoring__monitor=user
-            ).order_by("-created_at")
-
-        if user.tipo == "PROFESSOR":
-            return Ticket.objects.filter(
-                monitoring__professor=user
-            ).order_by("-created_at")
-
-        return Ticket.objects.none()
+        return tickets_for_user(self.request.user).order_by("-created_at")
 
     def perform_create(self, serializer):
         user = self.request.user
@@ -49,21 +30,15 @@ class TicketMessageViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        visible_tickets = TicketViewSet(
-            request=self.request
-        ).get_queryset()
-
         return TicketMessage.objects.filter(
-            ticket__in=visible_tickets
+            ticket__in=tickets_for_user(self.request.user)
         ).order_by("created_at")
 
     def perform_create(self, serializer):
         user = self.request.user
         ticket = serializer.validated_data["ticket"]
 
-        if not TicketViewSet(
-            request=self.request
-        ).get_queryset().filter(pk=ticket.pk).exists():
+        if not tickets_for_user(user).filter(pk=ticket.pk).exists():
             raise PermissionDenied(
                 "Você não tem acesso a este ticket."
             )
@@ -73,4 +48,9 @@ class TicketMessageViewSet(viewsets.ModelViewSet):
                 "Não é possível responder a um ticket encerrado."
             )
 
-        serializer.save(author=user)
+        message = serializer.save(author=user)
+        if user.is_superuser or user.tipo in ("MONITOR", "PROFESSOR", "COORDENADOR"):
+            message.ticket.status = Ticket.Status.ANSWERED
+        else:
+            message.ticket.status = Ticket.Status.IN_PROGRESS
+        message.ticket.save(update_fields=["status", "updated_at"])

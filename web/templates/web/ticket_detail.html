@@ -38,47 +38,54 @@
 
     <h2>Conversa</h2>
 
-    {% if ticket.messages.all %}
+    {% for message in ticket.messages.all %}
 
-        {% for message in ticket.messages.all %}
+        <div style="
+            padding: 12px;
+            margin-bottom: 10px;
+            background: #f4f6f8;
+            border-radius: 8px;
+        ">
 
-            <div style="
-                padding: 12px;
-                margin-bottom: 10px;
-                background: #f4f6f8;
-                border-radius: 8px;
-            ">
+            <strong>
+                {{ message.author.username }}
+            </strong>
 
-                <strong>
-                    {{ message.author.username }}
-                </strong>
-
-                <small>
-                    {{ message.created_at|date:"d/m/Y H:i" }}
-                </small>
-
-                <p>
-                    {{ message.message }}
-                </p>
-
-            </div>
-
-        {% empty %}
+            <small>
+                {{ message.created_at|date:"d/m/Y H:i" }}
+            </small>
 
             <p>
-                Nenhuma mensagem ainda.
+                {{ message.message }}
             </p>
 
-        {% endfor %}
+        </div>
 
-    {% endif %}
+    {% empty %}
+
+        <p>
+            Nenhuma resposta ainda.
+        </p>
+
+    {% endfor %}
 
 </div>
 
+{% if can_reply %}
 
 <div class="card">
 
-    <h2>Responder</h2>
+    <h2>
+        {% if user.tipo == "ALUNO" %}
+            Enviar mensagem
+        {% else %}
+            Responder ao aluno
+        {% endif %}
+    </h2>
+
+    {% if error %}
+        <p role="alert">{{ error }}</p>
+    {% endif %}
 
     <form method="post">
 
@@ -99,8 +106,16 @@
 
 </div>
 
-<a href="{% url 'monitor_tickets' %}">
-    Voltar para atendimentos
-</a>
+{% else %}
+    <div class="card">
+        <p>Esta dúvida foi encerrada e não aceita novas mensagens.</p>
+    </div>
+{% endif %}
+
+{% if user.tipo == "ALUNO" %}
+    <a href="{% url 'ticket_list' %}">Voltar para minhas dúvidas</a>
+{% else %}
+    <a href="{% url 'monitor_tickets' %}">Voltar para atendimentos</a>
+{% endif %}
 
 {% endblock %}

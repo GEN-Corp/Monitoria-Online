@@ -6,6 +6,8 @@
 
     <h1>Nova dúvida</h1>
 
+    {% if courses %}
+
     <form method="post">
 
         {% csrf_token %}
@@ -48,6 +50,12 @@
         </button>
 
     </form>
+
+    {% else %}
+        <p>
+            Não há disciplinas com monitoria ativa para receber dúvidas no momento.
+        </p>
+    {% endif %}
 
     <a href="{% url 'ticket_list' %}">
         Voltar para minhas dúvidas
