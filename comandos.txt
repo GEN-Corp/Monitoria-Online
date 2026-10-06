@@ -43,40 +43,55 @@ CONFIGURAR FIREBASE PARA DESENVOLVIMENTO
 1. No Firebase Console, crie/abra o projeto e habilite Authentication > E-mail/senha.
 2. Crie um banco Cloud Firestore em modo de produção.
 3. Em Configurações do projeto > Geral, copie o ID do projeto e a chave Web API.
-4. Copie .env.example para .env e preencha FIREBASE_PROJECT_ID e FIREBASE_API_KEY.
+4. Em Configurações do projeto > Contas de serviço, gere uma chave privada do
+   Firebase Admin SDK. Guarde o JSON fora da pasta do repositório.
+5. Copie .env.example para .env e preencha FIREBASE_PROJECT_ID e FIREBASE_API_KEY.
+   Para FIREBASE_SERVICE_ACCOUNT_BASE64, converta o arquivo JSON da conta de
+   serviço para Base64 sem imprimir a chave no terminal:
+
+   $serviceAccountPath = Read-Host "Caminho do JSON da conta de serviço"
+   [Convert]::ToBase64String([IO.File]::ReadAllBytes($serviceAccountPath)) | Set-Clipboard
+   # Cole o conteúdo da área de transferência no valor local de .env.
+   Crie também DJANGO_SECRET_KEY:
+   python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+
    Para usar os emuladores, preencha também FIRESTORE_EMULATOR_HOST e
    FIREBASE_AUTH_EMULATOR_HOST com 127.0.0.1:8080 e 127.0.0.1:9099.
-5. Para emuladores, instale o Firebase CLI e execute:
+6. Para emuladores, instale o Firebase CLI e execute:
    firebase emulators:start --only auth,firestore --project SEU_ID_DO_PROJETO_FIREBASE
-6. Para acessar o Firestore real localmente, configure
-   GOOGLE_APPLICATION_CREDENTIALS com o caminho de uma chave de conta de serviço.
-   Nunca adicione essa chave ao Git.
 7. Publique as regras e índices do repositório:
    firebase deploy --only firestore:rules,firestore:indexes --project SEU_ID_DO_PROJETO_FIREBASE
 
-PUBLICAR O SERVIDOR
+PUBLICAR NA VERCEL
 
-O Firestore guarda os dados compartilhados. O Django precisa também de um
-servidor HTTPS, por exemplo Google Cloud Run; Firebase Hosting sozinho não
-executa o backend Django.
+1. Importe a branch SCRUM-55 no projeto Vercel ou selecione-a no projeto já criado.
+   Configure Root Directory como a raiz do repositório e Framework Preset como
+   Django (detecção automática também deve encontrar manage.py). O arquivo
+   .python-version fixa Python 3.12 e vercel.json configura a função Django/WSGI.
+2. Antes de fazer o deploy, abra Settings > Environment Variables e adicione:
 
-No Google Cloud:
-1. Habilite Cloud Run, Cloud Build e Firestore.
-2. Use uma conta de serviço do Cloud Run com acesso ao Firestore e Firebase Authentication.
-3. Publique o projeto com Cloud Run a partir do repositório.
-4. Configure FIREBASE_PROJECT_ID, FIREBASE_API_KEY, DJANGO_DEBUG=false,
-   DJANGO_ALLOWED_HOSTS com o domínio run.app atribuído ao serviço,
-   DJANGO_CSRF_TRUSTED_ORIGINS com a origem HTTPS pública e DJANGO_SECRET_KEY.
-   Guarde DJANGO_SECRET_KEY no Secret Manager, não neste arquivo.
+   FIREBASE_PROJECT_ID                 ID do projeto Firebase
+   FIREBASE_API_KEY                    Chave Web API do app Firebase
+   FIREBASE_SERVICE_ACCOUNT_BASE64     JSON da conta de serviço em Base64
+   DJANGO_SECRET_KEY                   Chave aleatória Django
+   DJANGO_DEBUG                        false
+   DJANGO_ALLOWED_HOSTS                .vercel.app
+   DJANGO_CSRF_TRUSTED_ORIGINS         https://*.vercel.app
 
-Para gerar uma chave secreta localmente (cadastre o resultado diretamente nas
-variáveis protegidas do provedor, sem salvar o resultado no Git):
-python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+   Adicione as variáveis a Production, Preview e Development. Se usar domínio
+   próprio, inclua também o domínio em DJANGO_ALLOWED_HOSTS e sua origem HTTPS
+   em DJANGO_CSRF_TRUSTED_ORIGINS. Salve e faça redeploy para aplicar alterações
+   nas variáveis.
+3. Gere uma chave Django localmente e cadastre-a diretamente na Vercel:
 
-Comandos de publicação:
-python -m pip install -r requirements.txt
-python manage.py collectstatic --noinput
+   python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
 
-O Procfile inicia o servidor Gunicorn. As páginas de conversa consultam o
-servidor a cada cinco segundos para exibir novas respostas sem atualizar a tela.
-Nunca publique senhas, chaves privadas ou arquivos de conta de serviço.
+   Não a salve neste repositório.
+4. No Firebase Console > Authentication > Settings > Authorized domains,
+   adicione o domínio Vercel de produção e o domínio de Preview que será usado.
+5. Faça deploy pela Vercel. O Git push na branch conectada inicia um deploy de
+   Preview; após testar, faça merge para a branch Production configurada.
+
+O build nativo da Vercel coleta os arquivos estáticos do Django. Firebase Admin
+usa a conta de serviço do servidor; regras Firestore não autorizam acesso direto
+dos navegadores. Nunca cole credenciais no chat, commit ou issue.

@@ -1,9 +1,13 @@
 from datetime import datetime, timezone
+import base64
+import json
+import os
 from unittest import TestCase
 from unittest.mock import patch
 
 from django.contrib.auth.models import AnonymousUser
 from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.exceptions import ImproperlyConfigured
 from django.http import HttpResponseRedirect
 from django.test import RequestFactory, SimpleTestCase
 from django.urls import reverse
@@ -21,6 +25,7 @@ from firebase_backend.repository import (
     list_tickets,
 )
 from firebase_backend.middleware import FirebaseSessionMiddleware
+from firebase_backend.client import firebase_app
 
 
 class FakeSnapshot:
@@ -417,4 +422,121 @@ class FirebaseAuthenticationTests(SimpleTestCase):
             "novo@example.test",
             "Novo",
             "Aluno",
+        )
+
+
+class FirebaseCredentialsTests(SimpleTestCase):
+    def test_base64_service_account_is_loaded_without_logging_credentials(self):
+        service_account_info = {
+            "project_id": "monitoria-test",
+            "private_key": "test-private-key",
+        }
+        encoded = base64.b64encode(
+            json.dumps(service_account_info).encode("utf-8")
+        ).decode("ascii")
+        credential = object()
+        app = object()
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "FIREBASE_PROJECT_ID": "monitoria-test",
+                    "FIREBASE_SERVICE_ACCOUNT_BASE64": encoded,
+                },
+                clear=False,
+            ),
+            patch(
+                "firebase_backend.client.firebase_admin.get_app",
+                side_effect=ValueError,
+            ),
+            patch(
+                "firebase_backend.client.credentials.Certificate",
+                return_value=credential,
+            ) as certificate,
+            patch(
+                "firebase_backend.client.firebase_admin.initialize_app",
+                return_value=app,
+            ) as initialize,
+        ):
+            result = firebase_app()
+
+        self.assertIs(result, app)
+        certificate.assert_called_once_with(service_account_info)
+        initialize.assert_called_once_with(
+            credential=credential,
+            options={"projectId": "monitoria-test"},
+        )
+
+    def test_malformed_service_account_fails_without_echoing_its_value(self):
+        invalid_value = "not-a-valid-private-credential"
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "FIREBASE_PROJECT_ID": "monitoria-test",
+                    "FIREBASE_SERVICE_ACCOUNT_BASE64": invalid_value,
+                },
+                clear=False,
+            ),
+            patch(
+                "firebase_backend.client.firebase_admin.get_app",
+                side_effect=ValueError,
+            ),
+        ):
+            with self.assertRaises(ImproperlyConfigured) as caught:
+                firebase_app()
+
+        self.assertNotIn(invalid_value, str(caught.exception))
+
+    def test_service_account_must_match_configured_firebase_project(self):
+        encoded = base64.b64encode(
+            json.dumps({"project_id": "another-project"}).encode("utf-8")
+        ).decode("ascii")
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "FIREBASE_PROJECT_ID": "monitoria-test",
+                    "FIREBASE_SERVICE_ACCOUNT_BASE64": encoded,
+                },
+                clear=False,
+            ),
+            patch(
+                "firebase_backend.client.firebase_admin.get_app",
+                side_effect=ValueError,
+            ),
+            patch(
+                "firebase_backend.client.credentials.Certificate"
+            ) as certificate,
+        ):
+            with self.assertRaises(ImproperlyConfigured):
+                firebase_app()
+
+        certificate.assert_not_called()
+
+    def test_production_requires_service_account_credentials(self):
+        with (
+            patch("firebase_backend.client.settings.DEBUG", False),
+            patch.dict(
+                os.environ,
+                {"FIREBASE_PROJECT_ID": "monitoria-test"},
+                clear=False,
+            ),
+            patch.dict(
+                os.environ,
+                {"FIREBASE_SERVICE_ACCOUNT_BASE64": ""},
+                clear=False,
+            ),
+            patch(
+                "firebase_backend.client.firebase_admin.get_app",
+                side_effect=ValueError,
+            ),
+        ):
+            with self.assertRaises(ImproperlyConfigured) as caught:
+                firebase_app()
+
+        self.assertIn(
+            "FIREBASE_SERVICE_ACCOUNT_BASE64",
+            str(caught.exception),
         )

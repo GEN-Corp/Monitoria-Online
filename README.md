@@ -35,11 +35,11 @@ O cadastro público cria apenas alunos. Professores podem criar disciplinas em
 veem e respondem somente dúvidas de disciplinas às quais estão associados.
 
 Firestore armazena os dados compartilhados, Firebase Authentication valida
-contas e Django continua servindo as páginas e a API. As conversas consultam
-novas mensagens a cada cinco segundos. Para publicar Django, use HTTPS num
-serviço como Google Cloud Run e configure as variáveis documentadas em
-[comandos.txt](./comandos.txt). Firebase Hosting sozinho não executa Django.
-Mantenha segredos nas variáveis protegidas do provedor, nunca no repositório.
+contas e Django serve as páginas e a API como função Python na Vercel. As
+conversas consultam novas mensagens a cada cinco segundos. Configure as
+variáveis protegidas e o deploy conforme [comandos.txt](./comandos.txt).
+Credenciais da conta de serviço e `DJANGO_SECRET_KEY` não devem ser salvas no
+repositório.
 
 **Instituto Federal de Educação, Ciência e Tecnologia de São Paulo — IFSP**
 **Curso:** Técnico em Informática

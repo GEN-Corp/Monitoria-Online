@@ -12,6 +12,7 @@ from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env.local")
 load_dotenv(BASE_DIR / ".env")
 
 DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() in {
@@ -40,6 +41,18 @@ if not DEBUG and not os.environ.get("DJANGO_SECRET_KEY"):
 if not DEBUG and not ALLOWED_HOSTS:
     raise ImproperlyConfigured(
         "DJANGO_ALLOWED_HOSTS must be set when DEBUG is disabled."
+    )
+if not DEBUG and not os.environ.get("FIREBASE_PROJECT_ID"):
+    raise ImproperlyConfigured(
+        "FIREBASE_PROJECT_ID must be set when DEBUG is disabled."
+    )
+if not DEBUG and not os.environ.get("FIREBASE_API_KEY"):
+    raise ImproperlyConfigured(
+        "FIREBASE_API_KEY must be set when DEBUG is disabled."
+    )
+if not DEBUG and not os.environ.get("FIREBASE_SERVICE_ACCOUNT_BASE64"):
+    raise ImproperlyConfigured(
+        "FIREBASE_SERVICE_ACCOUNT_BASE64 must be set when DEBUG is disabled."
     )
 
 INSTALLED_APPS = [
@@ -126,7 +139,7 @@ STORAGES = {
         "BACKEND": "django.core.files.storage.FileSystemStorage",
     },
     "staticfiles": {
-        "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
     },
 }
 
