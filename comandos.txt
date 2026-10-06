@@ -47,3 +47,7 @@ Comando de inicialização:
 gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 60
 
 Não publique senhas, chaves ou URLs de banco com credenciais neste arquivo.
+python manage.py runserver
+
+
+https://chatgpt.com/share/6ac3cf51-2ef4-83e8-a76a-4f56c00a4962
