@@ -81,7 +81,8 @@ PUBLICAR NA VERCEL
    Adicione as variáveis a Production, Preview e Development. Se usar domínio
    próprio, inclua também o domínio em DJANGO_ALLOWED_HOSTS e sua origem HTTPS
    em DJANGO_CSRF_TRUSTED_ORIGINS. Salve e faça redeploy para aplicar alterações
-   nas variáveis.
+   nas variáveis. Na Vercel, DEBUG é desativado automaticamente e os domínios
+   atuais de Preview/produção são reconhecidos pelas variáveis da plataforma.
 3. Gere uma chave Django localmente e cadastre-a diretamente na Vercel:
 
    python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"

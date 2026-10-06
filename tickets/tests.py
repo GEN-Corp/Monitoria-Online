@@ -14,6 +14,11 @@ from django.urls import reverse
 from rest_framework.test import APIRequestFactory, force_authenticate
 from tickets.views import TicketViewSet
 
+from config.settings import (
+    _get_allowed_hosts,
+    _get_csrf_trusted_origins,
+    _get_debug,
+)
 from firebase_backend.records import FirebaseUser, MessageRecord
 from firebase_backend.repository import (
     add_message,
@@ -540,3 +545,52 @@ class FirebaseCredentialsTests(SimpleTestCase):
             "FIREBASE_SERVICE_ACCOUNT_BASE64",
             str(caught.exception),
         )
+
+
+class VercelHostConfigurationTests(SimpleTestCase):
+    def test_debug_is_disabled_on_vercel_even_if_environment_enables_it(self):
+        with patch.dict(
+            os.environ,
+            {"VERCEL": "1", "DJANGO_DEBUG": "true"},
+            clear=True,
+        ):
+            self.assertFalse(_get_debug())
+
+    def test_vercel_hostnames_are_allowed_and_trusted_for_csrf(self):
+        vercel_environment = {
+            "VERCEL_URL": "preview.example.vercel.app",
+            "VERCEL_BRANCH_URL": "branch.example.vercel.app",
+            "VERCEL_PROJECT_PRODUCTION_URL": "example.vercel.app",
+        }
+
+        with patch.dict(os.environ, vercel_environment, clear=True):
+            self.assertEqual(
+                _get_allowed_hosts(debug=False),
+                [
+                    "preview.example.vercel.app",
+                    "branch.example.vercel.app",
+                    "example.vercel.app",
+                ],
+            )
+            self.assertEqual(
+                _get_csrf_trusted_origins(),
+                [
+                    "https://preview.example.vercel.app",
+                    "https://branch.example.vercel.app",
+                    "https://example.vercel.app",
+                ],
+            )
+
+    def test_configured_hosts_are_preserved_and_duplicates_removed(self):
+        with patch.dict(
+            os.environ,
+            {
+                "DJANGO_ALLOWED_HOSTS": "localhost,preview.example.vercel.app",
+                "VERCEL_URL": "preview.example.vercel.app",
+            },
+            clear=True,
+        ):
+            self.assertEqual(
+                _get_allowed_hosts(debug=False),
+                ["localhost", "preview.example.vercel.app"],
+            )

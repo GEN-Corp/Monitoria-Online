@@ -15,24 +15,61 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env.local")
 load_dotenv(BASE_DIR / ".env")
 
-DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() in {
-    "1",
-    "true",
-    "yes",
-}
+def _get_debug():
+    if os.environ.get("VERCEL") == "1":
+        return False
+    return os.environ.get("DJANGO_DEBUG", "true").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+def _vercel_hostnames():
+    return [
+        hostname
+        for name in (
+            "VERCEL_URL",
+            "VERCEL_BRANCH_URL",
+            "VERCEL_PROJECT_PRODUCTION_URL",
+        )
+        if (hostname := os.environ.get(name, "").strip())
+    ]
+
+
+def _get_allowed_hosts(debug):
+    default_hosts = "localhost,127.0.0.1,[::1]" if debug else ""
+    hosts = [
+        host.strip()
+        for host in os.environ.get(
+            "DJANGO_ALLOWED_HOSTS",
+            default_hosts,
+        ).split(",")
+        if host.strip()
+    ]
+    return list(dict.fromkeys([*hosts, *_vercel_hostnames()]))
+
+
+def _get_csrf_trusted_origins():
+    origins = [
+        origin.strip()
+        for origin in os.environ.get(
+            "DJANGO_CSRF_TRUSTED_ORIGINS",
+            "",
+        ).split(",")
+        if origin.strip()
+    ]
+    vercel_origins = [f"https://{hostname}" for hostname in _vercel_hostnames()]
+    return list(dict.fromkeys([*origins, *vercel_origins]))
+
+
+DEBUG = _get_debug()
 
 SECRET_KEY = os.environ.get(
     "DJANGO_SECRET_KEY",
     "django-insecure-local-development-only",
 )
-ALLOWED_HOSTS = [
-    host.strip()
-    for host in os.environ.get(
-        "DJANGO_ALLOWED_HOSTS",
-        "localhost,127.0.0.1,[::1]" if DEBUG else "",
-    ).split(",")
-    if host.strip()
-]
+ALLOWED_HOSTS = _get_allowed_hosts(DEBUG)
 
 if not DEBUG and not os.environ.get("DJANGO_SECRET_KEY"):
     raise ImproperlyConfigured(
@@ -143,14 +180,7 @@ STORAGES = {
     },
 }
 
-CSRF_TRUSTED_ORIGINS = [
-    origin.strip()
-    for origin in os.environ.get(
-        "DJANGO_CSRF_TRUSTED_ORIGINS",
-        "",
-    ).split(",")
-    if origin.strip()
-]
+CSRF_TRUSTED_ORIGINS = _get_csrf_trusted_origins()
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_SSL_REDIRECT = not DEBUG
