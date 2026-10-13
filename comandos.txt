@@ -10,9 +10,17 @@ python -m pip install --upgrade pip
 
 pip install -r requirements.txt
 
+$env:DATABASE_URL = "postgresql://usuario:senha@host/neondb?sslmode=require"
+
 python manage.py migrate
 
-python manage.py runserver
+$env:DJANGO_SUPERUSER_USERNAME = "admin"
+$env:DJANGO_SUPERUSER_EMAIL = "seuemail@exemplo.com"
+$env:DJANGO_SUPERUSER_PASSWORD = "UmaSenhaForte123!"
+python manage.py createsuperuser --noinput
 
+python manage.py shell -c "from users.models import User; User.objects.filter(username='admin').update(tipo='COORDENADOR')"
+
+Remove-Item Env:DJANGO_SUPERUSER_PASSWORD
 
 https://chatgpt.com/share/6ac3cf51-2ef4-83e8-a76a-4f56c00a4962
