@@ -1,0 +1,10 @@
+$env:DATABASE_URL = "postgresql://usuario:senha@host/neondb?sslmode=require"
+
+$env:DJANGO_SUPERUSER_USERNAME = "admin"
+$env:DJANGO_SUPERUSER_EMAIL = "seuemail@exemplo.com"
+$env:DJANGO_SUPERUSER_PASSWORD = "UmaSenhaForte123!"
+python manage.py createsuperuser --noinput
+
+python manage.py shell -c "from users.models import User; User.objects.filter(username='admin').update(tipo='COORDENADOR')"
+
+Remove-Item Env:DJANGO_SUPERUSER_PASSWORD
