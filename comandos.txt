@@ -12,7 +12,4 @@ pip install -r requirements.txt
 
 python manage.py migrate
 
-
-
-
 https://chatgpt.com/share/6ac3cf51-2ef4-83e8-a76a-4f56c00a4962

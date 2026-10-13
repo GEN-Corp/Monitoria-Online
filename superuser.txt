@@ -1,10 +1,41 @@
-$env:DATABASE_URL = "postgresql://usuario:senha@host/neondb?sslmode=require"
+# ============================================================
+# Criar superusuario no banco de PRODUCAO (Neon) - Monitoria Online
+# Rodar no PowerShell, dentro da pasta do projeto (onde fica o manage.py)
+# ============================================================
 
+# 1 Ativar o ambiente virtual
+.\venv\Scripts\Activate.ps1
+
+# 2 Atualizar o pip e instalar as dependencias
+python -m pip install --upgrade pip
+
+pip install -r requirements.txt
+
+# 3 Apontar para o banco de producao (cole a string do Neon: botao "Connect")
+$env:DATABASE_URL = "COLE_AQUI_A_STRING_DO_NEON"
+
+# 4 Criar as tabelas
+python manage.py migrate
+
+# 5 Definir os dados do superusuario (troque pelos seus)
 $env:DJANGO_SUPERUSER_USERNAME = "admin"
 $env:DJANGO_SUPERUSER_EMAIL = "seuemail@exemplo.com"
-$env:DJANGO_SUPERUSER_PASSWORD = "UmaSenhaForte123!"
+$env:DJANGO_SUPERUSER_PASSWORD = "TROQUE_POR_UMA_SENHA_FORTE"
+
+# 6 Criar o superusuario
 python manage.py createsuperuser --noinput
 
+# 7 Marcar como Coordenador (o padrao do modelo e "Aluno")
 python manage.py shell -c "from users.models import User; User.objects.filter(username='admin').update(tipo='COORDENADOR')"
 
+# 8 Limpar a senha da sessao
 Remove-Item Env:DJANGO_SUPERUSER_PASSWORD
+
+
+# ============================================================
+# Depois: criar os cursos
+# ============================================================
+# 1. Abrir https://SEU-SITE.vercel.app/admin/ e entrar com o usuario e senha acima
+# 2. Clicar em "Courses" > "Add course"
+# 3. Preencher Name e Code (o Code nao pode se repetir)
+# 4. Clicar em "Save"
