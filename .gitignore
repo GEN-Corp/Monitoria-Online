@@ -1,0 +1,41 @@
+# Ambiente virtual
+venv/
+.venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Django
+*.log
+db.sqlite3
+db.sqlite3-journal
+media/
+staticfiles/
+
+# Variáveis de ambiente
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
+
+# Testes / cobertura
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Ruff / mypy
+.ruff_cache/
+.mypy_cache/
+
+# Arquivos temporários
+*.tmp
+*.swp

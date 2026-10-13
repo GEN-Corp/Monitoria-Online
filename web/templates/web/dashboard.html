@@ -1,0 +1,94 @@
+{% extends "web/base.html" %}
+
+{% block content %}
+
+<div class="card">
+
+    <h1>Olá, {{ user.first_name|default:user.username }}!</h1>
+
+    <p>
+        Perfil:
+        <strong>{{ user.get_tipo_display }}</strong>
+    </p>
+
+</div>
+
+
+{% if user.tipo == "ALUNO" %}
+
+    <div class="card">
+
+        <h2>Área do Aluno</h2>
+
+        <p>
+            Envie suas dúvidas e acompanhe os atendimentos.
+        </p>
+
+        <a href="{% url 'ticket_list' %}">
+            <button type="button">
+                Minhas dúvidas
+            </button>
+        </a>
+
+    </div>
+
+
+{% elif user.tipo == "MONITOR" %}
+
+    <div class="card">
+
+        <h2>Área do Monitor</h2>
+
+        <p>
+            Acompanhe e responda às dúvidas dos alunos.
+        </p>
+
+        <a href="{% url 'monitor_tickets' %}">
+            <button type="button">
+                Atendimentos
+            </button>
+        </a>
+
+    </div>
+
+
+{% elif user.tipo == "PROFESSOR" %}
+
+    <div class="card">
+
+        <h2>Área do Professor</h2>
+
+        <p>
+            Acompanhe os atendimentos das suas monitorias.
+        </p>
+
+        <a href="{% url 'monitor_tickets' %}">
+            <button type="button">
+                Atendimentos
+            </button>
+        </a>
+
+    </div>
+
+
+{% elif user.tipo == "COORDENADOR" %}
+
+    <div class="card">
+
+        <h2>Área do Coordenador</h2>
+
+        <p>
+            Gerencie disciplinas, monitores e monitorias.
+        </p>
+
+        <a href="/admin/">
+            <button type="button">
+                Administração
+            </button>
+        </a>
+
+    </div>
+
+{% endif %}
+
+{% endblock %}
